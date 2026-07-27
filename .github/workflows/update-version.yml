@@ -1,0 +1,36 @@
+name: Update VERSION file
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  update-version:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+        with:
+          ref: master
+
+      - name: Update VERSION and docker-compose
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          
+          VERSION_NAME=${GITHUB_REF#refs/tags/v}
+          echo "$VERSION_NAME" > VERSION
+          
+          sed -i "s/image: do-checker:.*/image: do-checker:$VERSION_NAME/" docker-compose.yml
+          
+          git add VERSION docker-compose.yml
+          git commit -m "Bump version to $VERSION_NAME [skip ci]" || echo "No changes to commit"
+
+      - name: Push changes
+        uses: ad-m/github-push-action@master
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          branch: master

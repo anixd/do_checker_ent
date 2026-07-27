@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+
+{% block content %}
+  <h2>Settings (direct editing <span class="code-settings">app.yaml</span>)</h2>
+
+  <div class="warning-box mb-3">
+    <p><strong>Warning:</strong></p>
+    <p>Editing these settings directly requires a clear understanding of the application configuration.</p>
+    <p>Incorrect changes may cause instability or application's unexpected behavior.</p>
+  <div>
+
+  <form method="post">
+    <textarea name="yaml" id="settings-textarea">{{ yaml }}</textarea><br/>
+    <button type="submit">Save</button>
+  </form>
+{% endblock %}
