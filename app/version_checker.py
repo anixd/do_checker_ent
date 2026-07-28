@@ -7,7 +7,7 @@ from packaging import version
 
 log = get_engine_logger()
 
-REMOTE_VERSION_URL = "https://raw.githubusercontent.com/anixd/do_checker/master/VERSION"
+REMOTE_VERSION_URL = "https://raw.githubusercontent.com/anixd/do_checker_ent/master/VERSION"
 
 LOCAL_VERSION_FILE = os.path.abspath("./VERSION")
 

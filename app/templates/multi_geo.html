@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 
 {% block content %}
-  <h1 class="mb-2">Multi-Geo Checker</h1>
+  <h1 class="mb-2">Multi-Geo Checker (Ent)</h1>
 
   <form method="post" action="{{ url_for('routes.launch_multi_geo_run') }}" id="check-form">
 
@@ -18,23 +18,30 @@
       <legend>Proxy Settings</legend>
       <div class="row">
         <div class="form-group">
-          <label for="connection_type">Connection Type</label>
-          <input type="text" id="connection_type" name="connection_type" value="wifi" readonly>
-        </div>
-        <div class="form-group">
-          <label for="proxy_type">Protocol</label>
-          <select name="proxy_type" id="proxy_type">
-            <option value="http" {% if defaults.proxy_type=='http' %}selected{% endif %}>HTTP</option>
-            <option value="socks5" {% if defaults.proxy_type=='socks5' %}selected{% endif %}>SOCKS5</option>
+          <label for="network">Network (required) *</label>
+          <select name="network" id="network" required>
+            <option value="" disabled selected>-- choose --</option>
+            <option value="res">Residential</option>
+            <option value="mob">Mobile</option>
+            <option value="res_mob">Residential + Mobile</option>
           </select>
         </div>
-        <div class="form-group">
-          <label for="dns_mode">DNS</label>
-          <select name="dns_mode" id="dns_mode">
-            <option value="proxy" {% if defaults.dns_mode=='proxy' %}selected{% endif %}>via proxy</option>
-            <option value="local" {% if defaults.dns_mode=='local' %}selected{% endif %}>local</option>
-          </select>
-        </div>
+
+{#        <div class="form-group">#}
+{#          <label for="proxy_type">Protocol</label>#}
+{#          <select name="proxy_type" id="proxy_type">#}
+{#            <option value="http" {% if defaults.proxy_type=='http' %}selected{% endif %}>HTTP</option>#}
+{#            <option value="socks5" {% if defaults.proxy_type=='socks5' %}selected{% endif %}>SOCKS5</option>#}
+{#          </select>#}
+{#        </div>#}
+{#        <div class="form-group">#}
+{#          <label for="dns_mode">DNS</label>#}
+{#          <select name="dns_mode" id="dns_mode">#}
+{#            <option value="proxy" {% if defaults.dns_mode=='proxy' %}selected{% endif %}>via proxy</option>#}
+{#            <option value="local" {% if defaults.dns_mode=='local' %}selected{% endif %}>local</option>#}
+{#          </select>#}
+{#        </div>#}
+
       </div>
     </fieldset>
 
@@ -42,12 +49,12 @@
       <legend>Advanced / Overrides</legend>
       <div class="row">
         <div class="form-group">
-          <label for="proxy_host">Proxy Host (Override)</label>
-          <input type="text" id="proxy_host" name="proxy_host" placeholder="{{ defaults.soax_host }}">
+          <label for="proxy_host">Proxy Host</label>
+          <input type="text" id="proxy_host" name="proxy_host" disabled placeholder="{{ defaults.soax_host }}">
         </div>
         <div class="form-group">
-          <label for="proxy_port">Proxy Port (Override)</label>
-          <input type="number" id="proxy_port" name="proxy_port" placeholder="{{ defaults.soax_port_default }}">
+          <label for="proxy_port">Proxy Port</label>
+          <input type="number" id="proxy_port" name="proxy_port" disabled placeholder="{{ defaults.soax_port_default }}">
         </div>
         <div class="form-group">
           <label for="timeout_sec">Timeout (sec)</label>

@@ -19,7 +19,7 @@ def unique_file_path(base_dir: str, name: str, ext: str) -> str:
         i += 1
 
 def render_md_card(
-    domain: str, started: str, geo_str: str, proxy_str: str, dns_mode: str,
+    domain: str, started: str, geo_str: str, proxy_str: str, network: str,
     timeout_sec: int, url_show: str, redirects: list, timings: dict,
     http_status: int | None, bytes_count: int | None, result: str,
     screenshot_name: str | None, notes: str | None,
@@ -30,7 +30,7 @@ def render_md_card(
     lines.append(f"Started: {started}")
     lines.append(f"Geo: {geo_str}")
     lines.append(f"Proxy: {proxy_str}")
-    lines.append(f"DNS mode: {dns_mode}")
+    lines.append(f"DNS mode: {network}")
     lines.append(f"Timeout: {timeout_sec}s")
     lines.append(f"URL: {url_show}")
     lines.append("")

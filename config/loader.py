@@ -3,6 +3,15 @@ import os, yaml
 from dataclasses import dataclass, fields, field
 from typing import Any, Dict, List
 
+
+def _as_bool(val: Any) -> bool:
+    """
+    Env vars always arrive as strings, and bool("false") is True in Python.
+    Without this, SOAX_BIND_NODE=false would silently enable bind-node.
+    """
+    return str(val).strip().lower() in ("1", "true", "yes", "on")
+
+
 @dataclass
 class AppCfg:
     host: str
@@ -28,14 +37,6 @@ class ExecCfg:
 
 
 @dataclass
-class ProxyCfg:
-    type: str
-    dns_mode: str
-    sticky_policy: str
-    sticky_ttl_sec: int
-
-
-@dataclass
 class ShotsCfg:
     enabled_default: bool
     max_workers: int
@@ -47,14 +48,26 @@ class ShotsCfg:
 
 @dataclass
 class SoaxCfg:
+    """
+    Connection settings for the SOAX gateway (proxy.soax.com:1337).
+
+    The gateway takes targeting rules inside the proxy username and the package
+    password as the proxy password, e.g.:
+        country-az-network-res_mob-onerror-retry_3-session-dc1a2b3c04 : <password>
+
+    Note: package_id (the UUID shown on the dashboard Settings tab) is NOT part
+    of the connection string. It is kept here only for a future catalog API.
+    """
     host: str
-    port_default_port: int
-    port_login: str
-    port_sticky: int
-    package_id: str | None
-    session_password: str | None
-    api_key: str | None
-    package_key: str | None
+    port: int
+    proxy_type: str           # http only; SOCKS5 breaks Chromium proxy auth
+    session_scope: str        # task | geo
+    on_error: str             # replace | retry | fail  -> gateway 'onerror-*' rule
+    on_error_retries: int     # 1..10, used when on_error == "retry"
+    bind_node: bool           # gateway 'bind-node' flag; incompatible with 'replace'
+    preflight: bool           # resolve ext_ip and actual geo before the real check
+    package_id: str | None    # dashboard UUID; unused for now, reserved for the API
+    package_password: str | None  # SECRET: .env only, never in app.yaml
 
 
 @dataclass
@@ -66,21 +79,65 @@ class HttpCfg:
 
 
 @dataclass
-class DnsCheckerCfg:
-    provider_keywords: Dict[str, List[str]] = field(default_factory=dict)
-
-
-@dataclass
 class RootCfg:
     app: AppCfg
     logging: LoggingCfg
     paths: PathsCfg
     execution: ExecCfg
-    proxy: ProxyCfg
     screenshots: ShotsCfg
     soax: SoaxCfg
     http_client: HttpCfg
-    dns_checker: DnsCheckerCfg
+
+
+# Applied key by key via setdefault, so a partially filled section in app.yaml
+# does not blow up dataclass construction with "missing required argument".
+_SECTION_DEFAULTS: Dict[str, Dict[str, Any]] = {
+    "app": {
+        "host": "127.0.0.1",
+        "port": 8888,
+        "default_theme": "auto",
+    },
+    "logging": {
+        "level": "INFO",
+    },
+    "paths": {
+        "logs_dir": "/logs",
+        "data_dir": "/data",
+    },
+    "execution": {
+        "max_concurrency": 3,
+        "timeout_sec": 60,
+    },
+    "screenshots": {
+        "enabled_default": False,
+        "max_workers": 1,
+        "width": 1366,
+        "height": 768,
+        "timeout_sec": 30,
+        "wait_after_load_sec": 15,
+    },
+    "soax": {
+        "host": "proxy.soax.com",
+        "port": 1337,
+        "proxy_type": "http",
+        "session_scope": "task",
+        "on_error": "retry",
+        "on_error_retries": 3,
+        "bind_node": False,
+        "preflight": True,
+        "package_id": None,
+        "package_password": None,
+    },
+    "http_client": {
+        "user_agent": (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+        ),
+        "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "accept_language": "en-US,en;q=0.5",
+        "custom_headers": {},
+    },
+}
 
 
 class ConfigStore:
@@ -102,71 +159,44 @@ class ConfigStore:
             print(f"       (Make sure ./data/config/app.yaml exists locally)")
             raise
 
-        if "app" in data and "default_theme" not in data["app"]:
-            data["app"]["default_theme"] = "auto"
+        cfg = cls._build(data)
+        cls._override_from_env(cfg)
+        cls._validate(cfg)
 
-        # defaults для logger
-        if "logging" not in data:
-            data["logging"] = {"level": "INFO"}
-
-        # defaults для screenshots
-        if "screenshots" not in data:
-            data["screenshots"] = {
-                "enabled_default": False,
-                "max_workers": 1,
-                "width": 1366,
-                "height": 768,
-                "timeout_sec": 30,
-                "wait_after_load_sec": 0
-            }
-
-        # defaults для soax и http_client
-        if "soax" not in data:
-            data["soax"] = {
-                "host": "proxy.soax.com",
-                "port_default_port": 9001,
-                "port_login": "",
-                "port_sticky": 5000,
-                "package_id": None,
-                "session_password": None,
-                "api_key": None,
-                "package_key": None
-            }
-        if "http_client" not in data:
-            data["http_client"] = {
-                "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36",
-                "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                "accept_language": "en-US,en;q=0.5"
-
-            }
-        elif "custom_headers" not in data["http_client"]:
-            # Заглушка для обратной совместимости, если http_client есть, а ключа нет
-            data["http_client"]["custom_headers"] = {}
-
-            # default для dns_checker
-            if "dns_checker" not in data:
-                data["dns_checker"] = {
-                    "provider_keywords": {}
-                }
-            elif "provider_keywords" not in data["dns_checker"]:
-                data["dns_checker"]["provider_keywords"] = {}
-
-        cls._cfg = RootCfg(
-            app=AppCfg(**data["app"]),
-            logging=LoggingCfg(**data["logging"]),
-            paths=PathsCfg(**data["paths"]),
-            execution=ExecCfg(**data["execution"]),
-            proxy=ProxyCfg(**data["proxy"]),
-            screenshots=ShotsCfg(**data["screenshots"]),
-            soax=SoaxCfg(**data["soax"]),
-            http_client=HttpCfg(**data["http_client"]),
-            dns_checker=DnsCheckerCfg(**data["dns_checker"])
-        )
-
-        cls._override_from_env(cls._cfg)
+        cls._cfg = cfg
 
         os.makedirs(cls._cfg.paths.data_dir, exist_ok=True)
         os.makedirs(cls._cfg.paths.logs_dir, exist_ok=True)
+
+    @classmethod
+    def _build(cls, data: Dict[str, Any] | None) -> RootCfg:
+        """
+        Turns raw YAML into a RootCfg, filling in per-key defaults first.
+        Unknown sections in app.yaml (e.g. a leftover 'proxy:') are ignored.
+        """
+        data = data or {}
+
+        for section, defaults in _SECTION_DEFAULTS.items():
+            if not isinstance(data.get(section), dict):
+                data[section] = {}
+            for key, val in defaults.items():
+                data[section].setdefault(key, val)
+
+        # Drop keys the dataclasses do not know about, so an old app.yaml
+        # left over from the port-mode version does not crash the startup.
+        def _only_known(cls_, section: str) -> Dict[str, Any]:
+            known = {f.name for f in fields(cls_)}
+            return {k: v for k, v in data[section].items() if k in known}
+
+        return RootCfg(
+            app=AppCfg(**_only_known(AppCfg, "app")),
+            logging=LoggingCfg(**_only_known(LoggingCfg, "logging")),
+            paths=PathsCfg(**_only_known(PathsCfg, "paths")),
+            execution=ExecCfg(**_only_known(ExecCfg, "execution")),
+            screenshots=ShotsCfg(**_only_known(ShotsCfg, "screenshots")),
+            soax=SoaxCfg(**_only_known(SoaxCfg, "soax")),
+            http_client=HttpCfg(**_only_known(HttpCfg, "http_client")),
+        )
 
     @classmethod
     def _override_from_env(cls, cfg: RootCfg):
@@ -179,22 +209,21 @@ class ConfigStore:
             "DATA_DIR": (cfg.paths, "data_dir"),
             "MAX_CONCURRENCY": (cfg.execution, "max_concurrency", int),
             "CHECK_TIMEOUT_SEC": (cfg.execution, "timeout_sec", int),
-            "PROXY_TYPE": (cfg.proxy, "type"),
-            "DNS_MODE": (cfg.proxy, "dns_mode"),
-            "STICKY_POLICY": (cfg.proxy, "sticky_policy"),
-            "STICKY_TTL_SEC": (cfg.proxy, "sticky_ttl_sec", int),
             "MAX_SCREENSHOT_WORKERS": (cfg.screenshots, "max_workers", int),
             "SCREENSHOT_TIMEOUT_SEC": (cfg.screenshots, "timeout_sec", int),
             "SCREENSHOT_WAIT_AFTER_LOAD_SEC": (cfg.screenshots, "wait_after_load_sec", int),
 
             "SOAX_HOST": (cfg.soax, "host"),
-            "SOAX_PORT_DEFAULT_PORT": (cfg.soax, "port_default_port", int),
-            "SOAX_PORT_LOGIN": (cfg.soax, "port_login"),
-            "SOAX_PORT_STICKY": (cfg.soax, "port_sticky", int),
+            "SOAX_PORT": (cfg.soax, "port", int),
+            "SOAX_PROXY_TYPE": (cfg.soax, "proxy_type"),
+            "SOAX_SESSION_SCOPE": (cfg.soax, "session_scope"),
+            "SOAX_ON_ERROR": (cfg.soax, "on_error"),
+            "SOAX_ON_ERROR_RETRIES": (cfg.soax, "on_error_retries", int),
+            "SOAX_BIND_NODE": (cfg.soax, "bind_node", _as_bool),
+            "SOAX_PREFLIGHT": (cfg.soax, "preflight", _as_bool),
             "SOAX_PACKAGE_ID": (cfg.soax, "package_id"),
-            "SOAX_SESSION_PASSWORD": (cfg.soax, "session_password"),
-            "SOAX_API_KEY": (cfg.soax, "api_key"),
-            "SOAX_PACKAGE_KEY": (cfg.soax, "package_key"),
+            "SOAX_PACKAGE_PASSWORD": (cfg.soax, "package_password"),
+
             "USER_AGENT": (cfg.http_client, "user_agent"),
         }
 
@@ -210,6 +239,60 @@ class ConfigStore:
                     print(f"Warning: Could not cast env var {env_key}={val} to {cast_func}")
 
     @classmethod
+    def _validate(cls, cfg: RootCfg):
+        """
+        Fail fast on a broken config instead of failing on every single check later.
+        The combination rules mirror the gateway's own validation, which answers
+        400 ERR_INVALID_COMBINATION for the same cases.
+        """
+        s = cfg.soax
+        errors: List[str] = []
+
+        if s.proxy_type != "http":
+            errors.append(
+                f"soax.proxy_type must be 'http', got '{s.proxy_type}'. "
+                "SOCKS5 is not supported: Chromium cannot authenticate to a SOCKS5 "
+                "proxy, so screenshots would silently fail."
+            )
+
+        if s.on_error not in ("replace", "retry", "fail"):
+            errors.append(
+                f"soax.on_error must be one of replace|retry|fail, got '{s.on_error}'"
+            )
+
+        if s.on_error == "retry" and not (1 <= s.on_error_retries <= 10):
+            errors.append(
+                f"soax.on_error_retries must be between 1 and 10, got {s.on_error_retries}"
+            )
+
+        if s.bind_node and s.on_error == "replace":
+            errors.append(
+                "soax.bind_node cannot be combined with on_error='replace' "
+                "(the gateway rejects it with 400 ERR_INVALID_COMBINATION). "
+                "Use on_error 'retry' or 'fail', or turn bind_node off."
+            )
+
+        if s.session_scope not in ("task", "geo"):
+            errors.append(
+                f"soax.session_scope must be 'task' or 'geo', got '{s.session_scope}'"
+            )
+
+        if not s.package_password:
+            errors.append(
+                "SOAX_PACKAGE_PASSWORD is not set. Put the package password from the "
+                "SOAX dashboard (Settings tab) into .env. Do not put it in app.yaml: "
+                "that file is rendered in the Settings page of this app."
+            )
+
+        if cfg.execution.max_concurrency < 1:
+            errors.append(
+                f"execution.max_concurrency must be >= 1, got {cfg.execution.max_concurrency}"
+            )
+
+        if errors:
+            raise ValueError("Invalid configuration:\n  - " + "\n  - ".join(errors))
+
+    @classmethod
     def get(cls) -> RootCfg:
         if cls._cfg is None:
             cls.init()
@@ -220,15 +303,35 @@ class ConfigStore:
         return cls._yaml_text
 
     @classmethod
-    def save_yaml(cls, text: str):
+    def save_yaml(cls, text: str) -> tuple[bool, str | None]:
+        """
+        Validates before writing. The previous version wrote first and reloaded
+        after, so a bad edit left a broken file on disk and a stale config in
+        memory: the app kept running and then refused to start next time.
+
+        Returns (ok, error_message).
+        """
         data_dir = cls.get().paths.data_dir
         app_yaml = os.path.join(data_dir, "config", "app.yaml")
 
         try:
-            yaml.safe_load(text)
+            data = yaml.safe_load(text)
+        except yaml.YAMLError as e:
+            return False, f"YAML syntax error: {e}"
+
+        try:
+            candidate = cls._build(data)
+            cls._override_from_env(candidate)
+            cls._validate(candidate)
+        except (TypeError, ValueError) as e:
+            return False, str(e)
+
+        try:
             with open(app_yaml, "w", encoding="utf-8") as f:
                 f.write(text)
-            cls._yaml_text = text
-            cls.init()
-        except Exception as e:
-            print(f"Error saving YAML to {app_yaml}: {e}")
+        except OSError as e:
+            return False, f"Could not write {app_yaml}: {e}"
+
+        cls._yaml_text = text
+        cls._cfg = candidate
+        return True, None

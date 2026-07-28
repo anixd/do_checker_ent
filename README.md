@@ -1,4 +1,4 @@
-# DutyOps Mirrors Checker (do_checker)
+# DutyOps Mirrors Checker (do_checker_ent)
 
 A web application to check the availability of websites ("mirrors") through the SOAX proxy service using specified geographic parameters. The application runs locally using Docker.
 
@@ -14,22 +14,31 @@ A web application to check the availability of websites ("mirrors") through the 
 
 1.  **Clone the repository:**
     ```bash
-    git clone [https://github.com/anixd/do_checker.git](https://github.com/anixd/do_checker.git)
-    cd do_checker
+    git clone https://github.com/anixd/do_checker_ent
+    cd do_checker_ent
     ```
 
 2.  **Create the `.env` file:**
-    * Copy the `.env.example` file to `.env`:
+    Copy the `.env.example` file to `.env`:
         ```bash
         cp .env.example .env
         ```
-    * **Edit the `.env` file:** This is the primary way to configure the application.
-        * **`SOAX_PORT_LOGIN`:** **(Required)** Replace `YOUR_TOKEN` with your **short token (login)** from the SOAX dashboard, used for Port mode.
-        * **`SOAX_API_KEY` and `SOAX_PACKAGE_KEY`:** **(Required for Geo Sync)** If you plan to use the Geo catalog update feature ("Refresh from SOAX"), fill these in from your SOAX dashboard.
-        * **`DEFAULT_THEME`:** (Optional) Set the default theme for new users. Can be `light`, `dark`, or `auto` (detects system settings). Defaults to `auto`.
-        * **`TZ`:** (Optional) Set your local timezone (e.g., `Europe/Kyiv`). Defaults to `UTC`.
-        * **`APP_HOST` and `APP_PORT`:** (Optional) Change the host/port. Defaults to `127.0.0.1:8888`.
-        * **`MAX_CONCURRENCY`, `MAX_SCREENSHOT_WORKERS`, and timeouts:** You can adjust performance parameters, although, these are **reasonable** defaults, I do not recommend changing them. In any case, change these options only if you understand what you're doing and why. Consider yourself warned ;)
+Then edit it. The important entries:
+
+| Variable | Required | Notes                                                                                                                                      |
+|---|---|--------------------------------------------------------------------------------------------------------------------------------------------|
+| `SOAX_PACKAGE_PASSWORD` | **yes** | The **Package password** from the SOAX dashboard, Settings tab. This is what authenticates the proxy. The app refuses to start without it. |
+| `SOAX_PACKAGE_ID` | no | The package UUID from the same tab. Not used in the connection string; reserved for a future catalog API.                                  |
+| `APP_HOST`, `APP_PORT` | no | Defaults to `127.0.0.1:8888`.                                                                                                              |
+| `DEFAULT_THEME` | no | `light`, `dark` or `auto`. Defaults to `auto`.                                                                                             |
+| `TZ` | no | e.g. `Europe/Kyiv`. Defaults to `UTC`.                                                                                                     |
+| `MAX_CONCURRENCY`, `MAX_SCREENSHOT_WORKERS`, timeouts | no | Tune to your workstation's RAM. The defaults are conservative on purpose — see [Concurrency](#concurrency).                                |
+
+> **Do not put the package password in `app.yaml`.** That file is editable
+> through the Settings page and rendered into the browser, so anything in it
+> ends up in screenshots and shared sessions. Secrets belong in `.env` only.
+
+> **`MAX_CONCURRENCY`, `MAX_SCREENSHOT_WORKERS`, and timeouts:** You can adjust performance parameters, although, these are **reasonable** defaults, I do not recommend changing them. In any case, change these options only if you understand what you're doing and why. Consider yourself warned ;)
 
 ---
 
@@ -96,69 +105,219 @@ Once this is done, the **Checker** page will correctly show countries, regions, 
 
 ## Usage
 
-* **Checker (`/`):**
-    * Enter URLs, select Geo Parameters, and run checks. Results appear in real-time via SSE.
-* **DNS Tools (`/dns-checker`):**
-    * Enter domains (one per line) to perform a DNS lookup and a Whois/RDAP check to identify the hosting provider (based on `provider_keywords` in the config).
-* **Geo Catalog (`/catalog`):**
-    * View the local cache of Geo data.
-    * Manage the country list (add/remove) and run the "Refresh from SOAX" task.
-* **Settings (`/settings`):**
-    * View and **dangerously** edit the live `app.yaml` config file.
+### Checker (`/`)
+
+Paste a list of URLs, pick one country and one network type, run. Results stream
+in live over SSE.
+
+URLs may be written bare (`example.com`) — the scheme defaults to `http://`, and
+redirects to HTTPS are followed and recorded.
+
+### Multi-Geo Checker (`/multi-geo`)
+
+One `domain country_code` pair per line:
+
+```
+site1.org ca
+site1.org az
+site2.org tr
+```
+
+Rows with a bad format or an invalid country code are reported individually
+rather than failing the whole run.
+
+Selecting **ALL** in the Checker's country dropdown expands into the same
+mechanism: every URL is paired with every country in the catalog.
+
+### Geo Catalog (`/catalog`)
+
+Add or remove countries by ISO 3166-1 alpha-2 code. Existing entries keep their
+names; new codes get a placeholder name you can edit in the JSON directly.
+
+> Region, city and ISP targeting is **not available** in this build. The SOAX
+> API that supplied those lists is not reachable on the enterprise plan, and the
+> gateway rejects invented values with `400 ERR_INVALID_VALUE`. See
+> [Known limitations](#known-limitations).
+
+### Settings (`/settings`)
+
+Live editing of `data/config/app.yaml`. Invalid YAML and invalid values are
+rejected before the file is written, so a bad edit cannot leave the app unable
+to restart — but it is still the sharpest tool in the box.
 
 ---
 
-## Configuration Priority
+## How sessions work
 
-The application loads settings in a specific order. Settings loaded later **override** settings loaded earlier:
+Each check runs inside a **SOAX session**, which pins all its requests to one
+exit node and therefore one IP address.
 
-1.  **`data/config/app.yaml`:** The base configuration file. It is created on first run if it doesn't exist.
-2.  **Environment Variables (`.env` file):** **(Recommended)** Any variable set in `.env` (like `APP_PORT` or `DEFAULT_THEME`) will override the value from `app.yaml`.
+This is not a nicety. A single page render in Chromium issues dozens of proxied
+requests — HTML, CSS, JS bundles, fonts, images. Without a session, each one
+would exit from a different address, in a different city, on a different ISP.
+Many sites break outright under that; others serve a CAPTCHA. The screenshot
+would be worthless and the verdict misleading.
 
+By default the app opens **one session per checked site** (`session_scope: task`).
+Fifteen URLs in one country means fifteen independent samples: a single bad exit
+node spoils one row, not the whole report.
 
-### Advanced Configuration (`app.yaml`)
+Setting `session_scope: geo` in `app.yaml` switches to one session per country,
+so every site in that country is checked from the same IP. Useful when you need
+a reproducible "from this specific address in Baku, these mirrors behaved like
+this" — for a provider ticket, say. The trade-off is that one unlucky node can
+skew the entire country's results.
 
-While most settings should be managed via `.env`, some complex structures are only available in `data/config/app.yaml`.
+Rotation rules (`rotate-timed`, `rotate-requests`) are deliberately not
+supported: both would change the IP mid-check, which is exactly what sessions
+exist to prevent.
 
-#### `http_client:custom_headers`
+### Concurrency
 
-This section allows you to add custom HTTP headers to *all* checks (both `requests` and Playwright screenshots).
+`MAX_CONCURRENCY` controls the app's thread pool, not a SOAX limit. Sessions
+active at any moment roughly equal the thread count; total sessions per run
+equal the number of checks. Even a run of hundreds of checks keeps only a
+handful of sessions open at once.
 
-**Important:** The `custom_headers: {}` line is a placeholder. To add headers, you **must remove the `{}`** and indent your headers correctly:
+`MAX_SCREENSHOT_WORKERS` is separate and defaults to 1, because each screenshot
+starts its own Chromium instance and they are memory-hungry.
+
+---
+
+## Configuration
+
+Settings load in order, later overriding earlier:
+
+1. `data/config/app.yaml` — created on first run if missing
+2. environment variables from `.env`
+
+Most things are best set in `.env`. Two structures live only in `app.yaml`.
+
+### `soax:`
+
+```yaml
+soax:
+  host: proxy.soax.com
+  port: 1337
+  proxy_type: http          # http only; SOCKS5 breaks screenshot auth
+  session_scope: task       # task | geo
+  on_error: retry           # replace | retry | fail
+  on_error_retries: 3       # 1..10
+  bind_node: false          # incompatible with on_error: replace
+  preflight: true           # resolve ext_ip and actual geo before checking
+```
+
+`on_error` maps to the gateway's own error handling: `replace` swaps in a new
+node immediately, `retry` retries on the same one up to N times, `fail` returns
+the error as-is. `retry` is the default — it survives a single flaky node
+without silently hiding a genuine outage.
+
+`preflight` adds one lightweight request per session against SOAX's own IP
+lookup. It fills in the exit IP and the node's real location, and turns gateway
+errors into readable messages. Turning it off saves a negligible amount of
+traffic and costs you most of the diagnostics.
+
+### `http_client:custom_headers`
+
+Adds headers to every check, both `requests` and Playwright:
 
 ```yaml
 http_client:
   user_agent: "Mozilla/5.0..."
   # ...
-  # custom_headers: {}  <- REMOVE THIS LINE
-  
-  # Add headers like this:
   custom_headers:
     X-CF-Bypass: "MySecretToken123"
     Another-Header: "SomeValue"
 ```
 
-#### `dns_checker:provider_keywords`
+An empty section must keep its braces — `custom_headers: {}`. When adding
+entries, remove the braces.
 
-This section defines the keywords used by the DNS Tools page to identify a hosting provider from a Whois record.
+---
 
-* The key (e.g., `Cloudflare`) is the display name shown in the UI.
-* The value (e.g., `["Cloudflare", "CLOUDFLARE", "CFN"]`) is a list of strings to search for (case-insensitive) in the raw Whois text.
 
-```yaml
-dns_checker:
-  provider_keywords:
-    "Cloudflare": ["Cloudflare", "CLOUDFLARE", "CFN"]
-    "Google Cloud": ["Google LLC", "GOOGLE", "GCP"]
-    "Amazon AWS": ["Amazon", "AWS", "AMAZON-02", "Amazon Technologies Inc."]
+## Reading results
+
+Every check writes a Markdown card to `./logs/YYYY-MM-DD/`, alongside a PNG when
+screenshots are enabled.
+
+The card records both the **requested** country and the **actual** exit node:
+
+```
+Geo: AZ (requested) — exit node: AZ / Baku / Azertelecom AS29049
+Proxy: SOAX session dca1b2c3d407, ext_ip: 5.191.10.20
 ```
 
+A mismatch between the two is flagged in the notes. It is worth paying attention
+to: SOAX occasionally routes through a neighbouring country when a pool is thin,
+and a result labelled "reachable from AZ" that actually came from Georgia is
+worse than no result at all.
+
+### Result classes
+
+| Class | Meaning |
+|---|---|
+| `success` | HTTP 2xx or 3xx |
+| `http_error` | the site answered with 4xx or 5xx |
+| `proxy_error` | **the gateway** rejected the request — see below |
+| `timeout`, `dns_error`, `tls_error`, `connect_error` | transport-level failures |
+
+`proxy_error` is a configuration or quota problem on our side, not a property of
+the site. The note carries SOAX's own diagnosis:
+
+| Gateway code | Usual cause |
+|---|---|
+| `AUTH_FAILED` | wrong or missing `SOAX_PACKAGE_PASSWORD` |
+| `TRAFFIC_LIMIT_EXCEEDED` | the package is out of traffic |
+| `ERR_INVALID_VALUE` | a rule value the gateway does not recognise |
+| `NODE_NOT_FOUND` | filters are valid but no node matches |
+| `SESSION_PARAMS_MISMATCH` | a session ID was reused with different rules |
+
+---
+
+## Logs and data
+
+* `./logs/` — check results (`.md`, `.png`) and `engine.log`
+* `./data/config/app.yaml` — configuration
+* `./data/catalog/soax_geo.json` — country list
+
+Both directories are bind-mounted from the host, so they survive container
+rebuilds.
+
+The **Clear Logs** button on the Checker page wipes `./logs/` entirely. There is
+no undo.
+
+---
+
+## Known limitations
+
+**No region / city / ISP targeting.** The gateway supports it, but the values
+must be exact slugs from a catalog API that is not exposed on the enterprise
+plan. The dashboard's own dropdowns call an internal endpoint that is not
+documented. Until that access materialises, targeting is by country only.
+
+**The country list is maintained by hand.** Now there is no way to refresh it from
+SOAX. Copy `soax_geo.json` between installations rather than rebuilding it.
+
+**Screenshots require an HTTP proxy.** Chromium cannot authenticate against a
+SOCKS5 proxy, so `proxy_type` is restricted to `http` and the app refuses to
+start otherwise.
+
+**A SOAX session expires after 60 seconds of inactivity.** If a screenshot waits a
+long time for its slot, its session may have lapsed and Chromium will land on a
+different SOAX node than the HTTP check did. In practice runs are fast enough that
+this rarely happens, but a screenshot that disagrees with the recorded exit IP
+is the symptom.
 
 ---
 
 ## Versioning & Updates
 
-The project follows **Semantic Versioning (X.Y.Z)**. Image tags in `docker-compose.yml` are explicitly linked to specific releases to ensure environment stability and avoid issues common with the `latest` tag.
+## Versioning
+
+Semantic versioning (`X.Y.Z`). Image tags in `docker-compose.yml` point at
+specific releases rather than `latest`, so a rebuild cannot silently change what
+you are running.
 
 ### Update Notifications
 
@@ -189,23 +348,8 @@ docker image prune -f
 
 ---
 
-## Main functionality
-
-* **DO Checker**: Checking a list of URLs via a specific location (Port-mode).
-* **Multi-Geo Checker**: Bulk domain check in format `domain.com country_code`.
-* **DNS Tools**: Checking A-records and identifying the provider via Whois/RDAP.
-* **Geo Catalog**: Managing local caches for regions, cities, and ISPs.
-
----
-
-## Logs and Data
-
-* **Logs**: All check results (`.md`, `.png`) and the engine.log are stored in the local `./logs/` directory (mounted from `/logs` in the container).
-* **Data**: The `app.yaml` config and `soax_geo.json` catalog are stored in the local `./data/` directory.
-
----
-
 ## Stopping the Application
 
 * Press `Ctrl+C` in the terminal (if running in foreground).
 * Run `docker-compose down` (if running in detached mode).
+

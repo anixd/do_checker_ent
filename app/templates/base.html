@@ -2,31 +2,27 @@
 <html data-default-theme="{{ default_theme | default('auto') }}">
 <head>
   <meta charset="utf-8" />
-  <title>{{ title | default('DO Checker') }}</title>
+  <title>{{ title | default('DO Checker Ent') }}</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
   <link rel="shortcut icon" href="{{ url_for('static', filename='img/do.ico') }}">
 
   <script src="{{ url_for('static', filename='js/theme.js') }}"></script>
 </head>
 <body
-  data-regions-url="{{ url_for('routes.api_get_regions') }}"
-  data-cities-url="{{ url_for('routes.api_get_cities') }}"
-  data-isps-url="{{ url_for('routes.api_get_isps') }}"
+{#  data-regions-url="{{ url_for('routes.api_get_regions') }}"#}
+{#  data-cities-url="{{ url_for('routes.api_get_cities') }}"#}
+{#  data-isps-url="{{ url_for('routes.api_get_isps') }}"#}
   data-events-url="{{ url_for('sse.events', run_id='') }}"
-  data-check-dns-url="{{ url_for('routes.launch_dns_run') }}"
 >
 
   <div class="nav-container">
     <nav class="tabs">
       <a href="{{ url_for('routes.index') }}"
          class="{{ 'active' if active_page == 'checker' else '' }}"
-         target="_blank">Main checker</a>
+         target="_blank">Main checker (Ent)</a>
       <a href="{{ url_for('routes.multi_geo_page') }}"
          class="{{ 'active' if active_page == 'multi_geo' else '' }}"
-         target="_blank">Multi-Geo checker</a>
-      <a href="{{ url_for('routes.dns_checker_page') }}"
-         class="{{ 'active' if active_page == 'dns_tools' else '' }}"
-         target="_blank">DNS Tools</a>
+         target="_blank">Multi-Geo checker (Ent)</a>
       <a href="{{ url_for('routes.catalog') }}"
          class="{{ 'active' if active_page == 'catalog' else '' }}"
          target="_blank" rel="noopener noreferrer">Geo Catalog</a>
