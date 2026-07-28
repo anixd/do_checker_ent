@@ -3,78 +3,6 @@ document.addEventListener("DOMContentLoaded", () => {
     // получаем URL для EventSource из data-атрибута
     const eventsUrlBase = document.body.dataset.eventsUrl || '/events/'; // базовый URL без run_id
 
-    // каскадные дропдауны
-    const countrySelect = document.getElementById("country");
-    const regionSelect = document.getElementById("region");
-    const citySelect = document.getElementById("city");
-    const ispSelect = document.getElementById("isp");
-    
-    // получаем URL из data-атрибутов (будут добавлены в html)
-    const geoUrls = {
-        regions: document.body.dataset.regionsUrl || '/api/geo/regions',
-        cities: document.body.dataset.citiesUrl || '/api/geo/cities',
-        isps: document.body.dataset.ispsUrl || '/api/geo/isps'
-    };
-    
-    const populateSelect = (selectEl, items, type) => {
-      selectEl.innerHTML = '<option value="">(any)</option>';
-      if (items && items.length > 0) {
-        if (type === 'isp') {
-          items.forEach(item => {
-            if (typeof item === 'string') {
-              const val = item.toLowerCase().replace(/ /g, '+');
-              selectEl.add(new Option(item, val));
-            }
-          });
-        } else {
-          items.forEach(item => {
-            if (item && typeof item === 'object' && item.code && item.name) {
-              selectEl.add(new Option(item.name, item.code));
-            }
-          });
-        }
-        selectEl.disabled = false;
-      } else {
-        selectEl.disabled = true;
-      }
-    };
-
-    if (countrySelect) {
-      countrySelect.addEventListener("change", async (e) => {
-        const countryCode = e.target.value;
-
-        populateSelect(regionSelect, [], 'region');
-        populateSelect(citySelect, [], 'city');
-        populateSelect(ispSelect, [], 'isp');
-
-        // Если выбрано ALL — выходим, оставляя поля заблокированными
-        if (!countryCode || countryCode === 'all') {
-            return;
-        }
-
-        try {
-          // используем URL из geoUrls
-          const [regionsRes, citiesRes, ispsRes] = await Promise.all([
-            fetch(`${geoUrls.regions}?country=${countryCode}`),
-            fetch(`${geoUrls.cities}?country=${countryCode}`),
-            fetch(`${geoUrls.isps}?country=${countryCode}`)
-          ]);
-          if (!regionsRes.ok || !citiesRes.ok || !ispsRes.ok) {
-             console.error("Failed to fetch geo data: One or more requests failed.");
-             return;
-          }
-          const regions = await regionsRes.json();
-          const cities = await citiesRes.json();
-          const isps = await ispsRes.json();
-          populateSelect(regionSelect, regions, 'region');
-          populateSelect(citySelect, cities, 'city');
-          populateSelect(ispSelect, isps, 'isp');
-        } catch (err) {
-          console.error("Failed to fetch geo data:", err);
-        }
-      });
-    }
-
     // перехват формы и SSE
     const form = document.getElementById("check-form");
     const resetButton = document.getElementById("reset-form-button");
@@ -83,24 +11,21 @@ document.addEventListener("DOMContentLoaded", () => {
     let currentEventSource = null;
 
     if (form && resetButton) {
-    form.addEventListener("reset", (event) => {
-        setTimeout(() => {
-            // чистим зависимые селекторы, только если они существуют на странице
-            if (regionSelect) populateSelect(regionSelect, [], 'region');
-            if (citySelect) populateSelect(citySelect, [], 'city');
-            if (ispSelect) populateSelect(ispSelect, [], 'isp');
+        form.addEventListener("reset", () => {
+            // setTimeout(0) - the browser clears the fields after this handler
+            // runs, so anything done synchronously here would be undone.
+            setTimeout(() => {
+                if (resultsContainer) {
+                    resultsContainer.innerHTML = '';
+                }
 
-            if (resultsContainer) {
-                resultsContainer.innerHTML = '';
-            }
-
-            const urlsTextarea = document.getElementById("urls");
-            if (urlsTextarea) {
-                urlsTextarea.focus();
-            }
-        }, 0);
-    });
-}
+                const urlsTextarea = document.getElementById("urls");
+                if (urlsTextarea) {
+                    urlsTextarea.focus();
+                }
+            }, 0);
+        });
+    }
 
     const getCardId = (payload) => {
         const cleanUrl = payload.url.replace(/[^a-zA-Z0-9]/g, "");

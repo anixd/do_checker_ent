@@ -87,9 +87,9 @@ def _run_checks_async(run_params: dict[str, Any], run_id: str):
         _sse_emit(run_id, {
             "type": "check_started",
             "run_id": run_id, "url": u,
-            "country": task_params.get("country"),
-            "region": task_params.get("region_code"),
-            "isp": task_params.get("isp")
+            "country": task_params.get("country")
+            # "region": task_params.get("region_code"),
+            # "isp": task_params.get("isp")
         })
 
         try:
@@ -311,6 +311,7 @@ def _run_multi_geo_async(run_params: dict[str, Any], run_id: str):
             "run_id": run_id,
             "session_id": task_item.get("session_id"),
         })
+        task_specific.pop("tasks", None)
 
         _sse_emit(run_id, {
             "type": "check_started",

@@ -39,6 +39,22 @@ class SoaxConfigError(ValueError):
     """Raised when the requested rules cannot produce a valid username."""
 
 
+class SoaxGatewayError(RuntimeError):
+    """
+    The gateway itself rejected the request, as opposed to the target site
+    answering with an error. Carries the X-SOAX-Error / X-SOAX-Detail pair.
+    """
+
+    def __init__(self, code: str, detail: str | None = None, http_status: int | None = None):
+        self.code = code
+        self.detail = detail
+        self.http_status = http_status
+        message = f"SOAX gateway: {code}"
+        if detail:
+            message += f" ({detail})"
+        super().__init__(message)
+
+
 def sanitize_credentials(text: str) -> str:
     """
     Strips user:pass out of any proxy URL embedded in a string.
@@ -52,8 +68,8 @@ def sanitize_credentials(text: str) -> str:
     return _CREDS_RE.sub(lambda m: m.group("scheme") + "***@", str(text))
 
 
-def mask_secret(value: str | None, keep: int = 4) -> str:
-    """Renders a secret as 'abcd...wxyz' for debug output."""
+def mask_secret(value: str | None, keep: int = 2) -> str:
+    """Renders a secret as 'ab.......yz' for debug output."""
     if not value:
         return "(not set)"
     if len(value) <= keep * 2:

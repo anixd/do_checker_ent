@@ -43,58 +43,58 @@
 
   <hr style="margin: 24px 0;">
 
-  <h3 style="margin-top: 0;">Refresh Data from SOAX API</h3>
-  <p class="muted" style="margin-top: -10px; margin-bottom: 10px;">
-    This will fetch new Regions, Cities, and ISPs for the countries saved in the list above.
-  </p>
-  <form method="post" action="{{ url_for('routes.catalog_refresh') }}" class="mb-3">
-    <button type="submit">Refresh from SOAX (in background)</button>
-  </form>
-
-  <hr style="margin: 24px 0;">
-
-  <h3>Catalog Viewer</h3>
-  {% if countries_list %}
-    {% for country in countries_list %}
-      <details>
-        <summary>{{ country.code | upper }} — {{ country.name }}</summary>
-        <div class="details-content">
-          <h4>Regions</h4>
-          {% if country.regions %}
-            <ul class="geo-list">
-              {% for region in country.regions | sort(attribute='name') %}
-                <li><code>{{ region.code }}</code> {{ region.name }}</li>
-              {% endfor %}
-            </ul>
-          {% else %}
-            <p class="empty-list">(No regions listed)</p>
-          {% endif %}
-
-          <h4>Cities</h4>
-          {% if country.cities %}
-            <ul class="geo-list">
-              {% for city in country.cities | sort(attribute='name') %}
-                <li><code>{{ city.code }}</code> {{ city.name }}</li>
-              {% endfor %}
-            </ul>
-          {% else %}
-            <p class="empty-list">(No cities listed)</p>
-          {% endif %}
-
-          <h4>ISPs</h4>
-          {% if country.isps %}
-            <ul class="geo-list">
-              {% for isp in country.isps | sort %}
-                <li>{{ isp }}</li>
-              {% endfor %}
-            </ul>
-          {% else %}
-            <p class="empty-list">(No ISPs listed)</p>
-          {% endif %}
-        </div>
-      </details>
-    {% endfor %}
-  {% else %}
-    <p class="muted">Catalog is empty or could not be loaded.</p>
-  {% endif %}
+{#  <h3 style="margin-top: 0;">Refresh Data from SOAX API</h3>#}
+{#  <p class="muted" style="margin-top: -10px; margin-bottom: 10px;">#}
+{#    This will fetch new Regions, Cities, and ISPs for the countries saved in the list above.#}
+{#  </p>#}
+{#  <form method="post" action="{{ url_for('routes.catalog_refresh') }}" class="mb-3">#}
+{#    <button type="submit">Refresh from SOAX (in background)</button>#}
+{#  </form>#}
+{##}
+{#  <hr style="margin: 24px 0;">#}
+{##}
+{#  <h3>Catalog Viewer</h3>#}
+{#  {% if countries_list %}#}
+{#    {% for country in countries_list %}#}
+{#      <details>#}
+{#        <summary>{{ country.code | upper }} — {{ country.name }}</summary>#}
+{#        <div class="details-content">#}
+{#          <h4>Regions</h4>#}
+{#          {% if country.regions %}#}
+{#            <ul class="geo-list">#}
+{#              {% for region in country.regions | sort(attribute='name') %}#}
+{#                <li><code>{{ region.code }}</code> {{ region.name }}</li>#}
+{#              {% endfor %}#}
+{#            </ul>#}
+{#          {% else %}#}
+{#            <p class="empty-list">(No regions listed)</p>#}
+{#          {% endif %}#}
+{##}
+{#          <h4>Cities</h4>#}
+{#          {% if country.cities %}#}
+{#            <ul class="geo-list">#}
+{#              {% for city in country.cities | sort(attribute='name') %}#}
+{#                <li><code>{{ city.code }}</code> {{ city.name }}</li>#}
+{#              {% endfor %}#}
+{#            </ul>#}
+{#          {% else %}#}
+{#            <p class="empty-list">(No cities listed)</p>#}
+{#          {% endif %}#}
+{##}
+{#          <h4>ISPs</h4>#}
+{#          {% if country.isps %}#}
+{#            <ul class="geo-list">#}
+{#              {% for isp in country.isps | sort %}#}
+{#                <li>{{ isp }}</li>#}
+{#              {% endfor %}#}
+{#            </ul>#}
+{#          {% else %}#}
+{#            <p class="empty-list">(No ISPs listed)</p>#}
+{#          {% endif %}#}
+{#        </div>#}
+{#      </details>#}
+{#    {% endfor %}#}
+{#  {% else %}#}
+{#    <p class="muted">Catalog is empty or could not be loaded.</p>#}
+{#  {% endif %}#}
 {% endblock %}
