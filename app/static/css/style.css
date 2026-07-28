@@ -49,13 +49,6 @@
     --c-warning-border: #920404;
     --c-warning-text: #856404;
 
-    /* -- DNS/Whois Details -- */
-    --c-btn-details-bg: #fff;
-    --c-btn-details-border: #a00;
-    --c-btn-details-border-hover: #d00;
-    --c-btn-details-text: #a00;
-    --c-btn-details-text-hover: #d00;
-
     /* -- Код -- */
     --c-code-text-green: #00b614;
     --c-code-text-blue: #0427b1;
@@ -111,13 +104,6 @@
     --c-warning-bg: #4d4323;
     --c-warning-border: #e05e5e;
     --c-warning-text: #fff3cd;
-
-    /* -- DNS/Whois Details -- */
-    --c-btn-details-bg: #2c2c2e;
-    --c-btn-details-border: #f88a95;
-    --c-btn-details-border-hover: #ffb0b7;
-    --c-btn-details-text: #f88a95;
-    --c-btn-details-text-hover: #ffb0b7;
 
     /* -- Код -- */
     --c-code-text-green: #56d364;
@@ -382,30 +368,6 @@ nav.tabs a.active {
     cursor: pointer;
 }
 
-/* Результаты DNS Checker */
-.dns-result-card {
-    border: 1px solid var(--c-border-light);
-    border-radius: 8px;
-    padding: 12px 16px;
-    margin-bottom: 12px;
-    display: grid;
-    grid-template-columns: 40px 1.5fr 1fr 100px;
-    gap: 16px;
-    align-items: center;
-    background-color: var(--c-bg-body);
-}
-.dns-result-card strong { font-size: 1.1em; }
-.dns-result-card .status { font-weight: bold; }
-.dns-result-card .status-icon { font-size: 24px; }
-.dns-result-card .ips-list { font-size: 13px; color: var(--c-text-muted); margin-top: 4px; }
-.dns-result-card .owner-info { font-size: 14px; color: var(--c-text); }
-.dns-result-header {
-    grid-column: 1 / -1;
-    padding-bottom: 8px;
-    border-bottom: 1px solid var(--c-border-lighter);
-    font-size: 14px;
-    color: var(--c-text-muted);
-}
 .btn-details {
     display: inline-block;
     padding: 6px 12px;

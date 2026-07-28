@@ -14,8 +14,8 @@ A web application to check the availability of websites ("mirrors") through the 
 
 1.  **Clone the repository:**
     ```bash
-    git clone [https://github.com/anixd/do_checker.git](https://github.com/anixd/do_checker.git)
-    cd do_checker
+    git clone [https://github.com/anixd/do_checker_ent.git](https://github.com/anixd/do_checker_ent.git)
+    cd do_checker_ent
     ```
 
 2.  **Create the `.env` file:**
@@ -98,8 +98,6 @@ Once this is done, the **Checker** page will correctly show countries, regions, 
 
 * **Checker (`/`):**
     * Enter URLs, select Geo Parameters, and run checks. Results appear in real-time via SSE.
-* **DNS Tools (`/dns-checker`):**
-    * Enter domains (one per line) to perform a DNS lookup and a Whois/RDAP check to identify the hosting provider (based on `provider_keywords` in the config).
 * **Geo Catalog (`/catalog`):**
     * View the local cache of Geo data.
     * Manage the country list (add/remove) and run the "Refresh from SOAX" task.
@@ -137,24 +135,6 @@ http_client:
     X-CF-Bypass: "MySecretToken123"
     Another-Header: "SomeValue"
 ```
-
-#### `dns_checker:provider_keywords`
-
-This section defines the keywords used by the DNS Tools page to identify a hosting provider from a Whois record.
-
-* The key (e.g., `Cloudflare`) is the display name shown in the UI.
-* The value (e.g., `["Cloudflare", "CLOUDFLARE", "CFN"]`) is a list of strings to search for (case-insensitive) in the raw Whois text.
-
-```yaml
-dns_checker:
-  provider_keywords:
-    "Cloudflare": ["Cloudflare", "CLOUDFLARE", "CFN"]
-    "Google Cloud": ["Google LLC", "GOOGLE", "GCP"]
-    "Amazon AWS": ["Amazon", "AWS", "AMAZON-02", "Amazon Technologies Inc."]
-```
-
-
----
 
 ## Versioning & Updates
 

@@ -6,7 +6,7 @@ from datetime import datetime
 import threading
 import shutil
 import os
-from engine.orchestrator import start_run, get_run_state, start_dns_run
+from engine.orchestrator import start_run, get_run_state
 from config.loader import ConfigStore
 from providers.soax import CatalogStore, refresh_catalog_data
 from logging_.engine_logger import get_engine_logger
@@ -30,14 +30,10 @@ def index():
         countries=countries,
         defaults=dict(
             # Proxy defaults
-            proxy_type=cfg.proxy.type,
-            dns_mode=cfg.proxy.dns_mode,
+            proxy_type=cfg.soax.proxy_type,
             # Soax defaults
             soax_host=cfg.soax.host,
-            soax_port_default=cfg.soax.port_default_port,
-            # Sticky defaults
-            sticky_policy=cfg.proxy.sticky_policy,
-            sticky_ttl_sec=cfg.proxy.sticky_ttl_sec,
+            soax_port=cfg.soax.port,
             # Execution defaults
             timeout_sec=cfg.execution.timeout_sec,
             screenshots_enabled=cfg.screenshots.enabled_default,
@@ -84,8 +80,8 @@ def launch_run():
             "proxy_type": request.form.get("proxy_type") or "http",
             "dns_mode": request.form.get("dns_mode") or "proxy",
             "connection_type": request.form.get("connection_type") or "wifi",
-            "proxy_host": request.form.get("proxy_host") or None,
-            "proxy_port": request.form.get("proxy_port") or None,
+            "host": request.form.get("host") or None,
+            "port": request.form.get("port") or None,
             "timeout_sec": int(request.form.get("timeout_sec") or 60),
             "make_screenshot": bool(request.form.get("make_screenshot")),
             "debug_mode": bool(request.form.get("debug_mode")),
@@ -104,15 +100,12 @@ def launch_run():
         "city": request.form.get("city") or None,
         "isp": request.form.get("isp") or None,
         "proxy_type": request.form.get("proxy_type") or "http",
-        "dns_mode": request.form.get("dns_mode") or "proxy",
         "connection_type": request.form.get("connection_type") or "wifi",
-        "proxy_host": request.form.get("proxy_host") or None,
-        "proxy_port": request.form.get("proxy_port") or None,
+        "host": request.form.get("host") or None,
+        "port": request.form.get("port") or None,
         "timeout_sec": int(request.form.get("timeout_sec") or 60),
         "make_screenshot": bool(request.form.get("make_screenshot")),
         "debug_mode": bool(request.form.get("debug_mode")),
-        "sticky_policy": request.form.get("sticky_policy") or "auto",
-        "sticky_ttl_sec": int(request.form.get("sticky_ttl_sec") or 360),
     }
 
     log.info(f"Accepted standard run request. URLs: {len(urls)}, Country: {country_code}.")
@@ -202,9 +195,11 @@ def settings():
 @bp.post("/settings")
 def settings_save():
     yaml_text = request.form.get("yaml") or ""
-    ConfigStore.save_yaml(yaml_text)
-    # flash-сообщение для страницы settings
-    flash("Settings saved successfully.", "settings")
+    ok, err = ConfigStore.save_yaml(yaml_text)
+    if ok:
+        flash("Settings saved successfully.", "settings")
+    else:
+        flash(f"Settings NOT saved: {err}", "settings")
     return redirect(url_for("routes.settings"))
 
 
@@ -273,35 +268,6 @@ def clear_logs():
         return jsonify({"success": False, "message": str(e)}), 500
 
 
-@bp.get("/dns-checker")
-def dns_checker_page():
-    return render_template(
-        "dns_checker.html",
-        active_page="dns_tools"
-    )
-
-
-@bp.post("/check-dns")
-def launch_dns_run():
-    domains_raw = (request.form.get("domains") or "").strip()
-    domains = [d.strip() for d in domains_raw.splitlines() if d.strip()]
-
-    if not domains:
-        log.warning("DNS check rejected: No domains provided.")
-        # Можно вернуть ошибку JSON, если JS будет ее обрабатывать
-        return jsonify({"error": "No domains provided"}), 400
-
-    log.info(
-        f"Accepted /check-dns request. Domains: {len(domains)}. Starting DNS run..."
-    )
-
-    run_id = start_dns_run(domains)
-
-    log.info(f"[{run_id}] Returning HTTP 202 for DNS run.")
-
-    return jsonify({"run_id": run_id}), 202  # Accepted
-
-
 @bp.get("/help")
 def help_page():
     help_html = render_markdown_file("help.md")
@@ -320,10 +286,9 @@ def multi_geo_page():
         active_page="multi_geo",
         countries=[], # Здесь список для гео-выпадайки не нужен
         defaults=dict(
-            proxy_type=cfg.proxy.type,
-            dns_mode=cfg.proxy.dns_mode,
+            proxy_type=cfg.soax.proxy_type,
             soax_host=cfg.soax.host,
-            soax_port_default=cfg.soax.port_default_port,
+            soax_port=cfg.soax.port,
             timeout_sec=cfg.execution.timeout_sec,
             screenshots_enabled=cfg.screenshots.enabled_default,
         ),

@@ -24,23 +24,6 @@ paths:
 execution:
   max_concurrency: 3
   timeout_sec: 60
-http_client:
-  user_agent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
-  accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
-  accept_language: "en-US,en;q=0.5"
-  custom_headers: {}
-    # NOTE: If the 'custom_headers' section is empty, it MUST contain curly braces:
-    # 'custom_headers: {}'
-    # When adding custom headers, the curly braces {} MUST be removed.
-    # custom_headers entries format:
-    #  X-CF-Bypass: "MySecretToken123"
-    #  Another-Header: "SomeValue"
-    #  User-Referer: "https://example.com/"
-proxy:
-  type: http
-  dns_mode: proxy
-  sticky_policy: auto
-  sticky_ttl_sec: 360
 screenshots:
   enabled_default: false
   max_workers: 1
@@ -50,13 +33,13 @@ screenshots:
   wait_after_load_sec: 15
 soax:
   host: proxy.soax.com
-  port_default_port: 9001
-  port_login: ""
-  port_sticky: 5000
-  package_id: null
-  session_password: null
-  api_key: null
-  package_key: null
+  port: 1337
+  proxy_type: http
+  session_scope: task
+  on_error: retry
+  on_error_retries: 3
+  bind_node: false
+  preflight: true
 http_client:
   user_agent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
   accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
@@ -69,14 +52,6 @@ http_client:
     #  X-CF-Bypass: "MySecretToken123"
     #  Another-Header: "SomeValue"
     #  User-Referer: "https://example.com/"
-dns_checker:
-  # key: Canonical name (displayed in the UI)
-  # value: List of keywords for Whois/RDAP search
-  provider_keywords:
-    "Cloudflare": ["Cloudflare", "CLOUDFLARE", "CFN"]
-    "Google Cloud": ["Google LLC", "GOOGLE", "GCP"]
-    "Amazon AWS": ["Amazon", "AWS", "AMAZON-02", "Amazon Technologies Inc."]
-    "CloudKleyer": ["CloudKleyer", "DE-CLOUDKLEYER"]
 YAML
 fi
 
