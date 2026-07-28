@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 
 {% block content %}
-  <h1 class="mb-2">DO Checker</h1>
+  <h1 class="mb-2">DO Checker (Ent)</h1>
 
   <form method="post" action="{{ url_for('routes.launch_run') }}" id="check-form">
 
@@ -45,8 +45,13 @@
       <legend>Proxy Settings</legend>
       <div class="row">
         <div class="form-group">
-          <label for="connection_type">Connection Type</label>
-          <input type="text" id="connection_type" name="connection_type" value="wifi" readonly>
+          <label for="network">Network (required)</label>
+          <select name="network" id="network" required>
+            <option value="" disabled selected>-- choose --</option>
+            <option value="res">Residential</option>
+            <option value="mob">Mobile</option>
+            <option value="res_mob">Residential + Mobile</option>
+          </select>
         </div>
         <div class="form-group">
           <label for="proxy_type">Protocol</label>

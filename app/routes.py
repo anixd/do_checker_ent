@@ -13,6 +13,8 @@ from logging_.engine_logger import get_engine_logger
 from .utils import render_markdown_file
 import urllib.parse
 
+FORM_NETWORKS = ("res", "mob", "res_mob")
+
 log = get_engine_logger()
 
 bp = Blueprint("routes", __name__)
@@ -29,12 +31,8 @@ def index():
         active_page="checker",
         countries=countries,
         defaults=dict(
-            # Proxy defaults
-            proxy_type=cfg.soax.proxy_type,
-            # Soax defaults
             soax_host=cfg.soax.host,
-            soax_port=cfg.soax.port,
-            # Execution defaults
+            soax_port_default=cfg.soax.port,
             timeout_sec=cfg.execution.timeout_sec,
             screenshots_enabled=cfg.screenshots.enabled_default,
         ),
@@ -57,13 +55,23 @@ def launch_run():
         log.warning("Run rejected: No valid URLs after normalization.")
         return Response("No valid URLs provided", status=400)
 
-    country_code = request.form.get("country")
+    country_code = (request.form.get("country") or "").strip().lower()
     if not country_code:
         log.warning("Run rejected: Country is required.")
         return Response("Country is required", status=400)
 
+    # Validated here rather than deeper down: the gateway answers 200 to a
+    # request carrying no targeting rules and routes it through an arbitrary
+    # country, which would yield a plausible but meaningless result.
+    network = (request.form.get("network") or "").strip().lower()
+    if network not in FORM_NETWORKS:
+        log.warning(f"Run rejected: invalid network {network!r}.")
+        return Response(
+            "Network type is required (residential / mobile / both)", status=400
+        )
+
     # Обработка режима ALL
-    if country_code == 'all':
+    if country_code == "all":
         from engine.orchestrator import start_multi_geo_run
 
         all_countries = CatalogStore.get_countries()
@@ -72,23 +80,21 @@ def launch_run():
             for c in all_countries:
                 tasks.append({
                     "url": u,
-                    "country": c['code']
+                    "country": c["code"]
                 })
 
         run_params = {
             "tasks": tasks,
-            "proxy_type": request.form.get("proxy_type") or "http",
-            "dns_mode": request.form.get("dns_mode") or "proxy",
-            "connection_type": request.form.get("connection_type") or "wifi",
-            "host": request.form.get("host") or None,
-            "port": request.form.get("port") or None,
+            "network": network,
             "timeout_sec": int(request.form.get("timeout_sec") or 60),
             "make_screenshot": bool(request.form.get("make_screenshot")),
             "debug_mode": bool(request.form.get("debug_mode")),
             "multi_geo": True
         }
 
-        log.info(f"Accepted ALL-country run request. URLs: {len(urls)}, Tasks: {len(tasks)}.")
+        log.info(
+            f"Accepted ALL-country run request. URLs: {len(urls)}, Tasks: {len(tasks)}."
+        )
         run_id = start_multi_geo_run(run_params)
         return jsonify({"run_id": run_id}), 202
 
@@ -96,19 +102,15 @@ def launch_run():
     run_params = {
         "urls": urls,
         "country": country_code,
-        "region_code": request.form.get("region") or None,
-        "city": request.form.get("city") or None,
-        "isp": request.form.get("isp") or None,
-        "proxy_type": request.form.get("proxy_type") or "http",
-        "connection_type": request.form.get("connection_type") or "wifi",
-        "host": request.form.get("host") or None,
-        "port": request.form.get("port") or None,
+        "network": network,
         "timeout_sec": int(request.form.get("timeout_sec") or 60),
         "make_screenshot": bool(request.form.get("make_screenshot")),
         "debug_mode": bool(request.form.get("debug_mode")),
     }
 
-    log.info(f"Accepted standard run request. URLs: {len(urls)}, Country: {country_code}.")
+    log.info(
+        f"Accepted standard run request. URLs: {len(urls)}, Country: {country_code}."
+    )
     run_id = start_run(run_params)
     return jsonify({"run_id": run_id}), 202
 
@@ -286,9 +288,8 @@ def multi_geo_page():
         active_page="multi_geo",
         countries=[], # Здесь список для гео-выпадайки не нужен
         defaults=dict(
-            proxy_type=cfg.soax.proxy_type,
             soax_host=cfg.soax.host,
-            soax_port=cfg.soax.port,
+            soax_port_default=cfg.soax.port,
             timeout_sec=cfg.execution.timeout_sec,
             screenshots_enabled=cfg.screenshots.enabled_default,
         ),
@@ -305,48 +306,61 @@ def launch_multi_geo_run():
         log.warning("Multi-Geo Run rejected: No input provided.")
         return Response("No URLs and countries provided", status=400)
 
+    network = (request.form.get("network") or "").strip().lower()
+    if network not in FORM_NETWORKS:
+        log.warning(f"Multi-Geo Run rejected: invalid network {network!r}.")
+        return Response(
+            "Network type is required (residential / mobile / both)", status=400
+        )
+
     tasks = []
     seen_tasks = set()
     seen_errors = set()
 
+    def _add_error(url_err: str, err_msg: str):
+        err_key = (url_err, err_msg)
+        if err_key not in seen_errors:
+            tasks.append({
+                "url": url_err,
+                "country": None,
+                "parsing_error": err_msg
+            })
+            seen_errors.add(err_key)
+
     for line in lines:
         parts = line.split()
-        if len(parts) >= 2:
-            # домен нормализуем, local path сохраняем
-            url = normalize_url_complex(parts[0])
-            country = parts[1].lower()  # гео в lower
 
-            task_key = (url, country)
-            if task_key not in seen_tasks:
-                tasks.append({
-                    "url": url,
-                    "country": country
-                })
-                seen_tasks.add(task_key)
-        else:
-            # Обработка ошибок формата
-            url_err = parts[0].lower() if parts else "Unknown"
-            err_msg = "Invalid format (expected: url cc)"
+        if len(parts) < 2:
+            _add_error(
+                parts[0].lower() if parts else "Unknown",
+                "Invalid format (expected: url cc)"
+            )
+            continue
 
-            err_key = (url_err, err_msg)
-            if err_key not in seen_errors:
-                tasks.append({
-                    "url": url_err,
-                    "country": None,
-                    "parsing_error": err_msg
-                })
-                seen_errors.add(err_key)
+        # домен нормализуем, local path сохраняем
+        url = normalize_url_complex(parts[0])
+        country = parts[1].lower()
+
+        # Caught here so a typo shows up as a per-row parsing error instead of
+        # an opaque "Worker failed" once the provider rejects the rule string.
+        if len(country) != 2 or not country.isalpha():
+            _add_error(url, f"Invalid country code: {parts[1]!r} (expected 2 letters)")
+            continue
+
+        task_key = (url, country)
+        if task_key not in seen_tasks:
+            tasks.append({
+                "url": url,
+                "country": country
+            })
+            seen_tasks.add(task_key)
 
     if not tasks:
         return Response("No valid tasks found", status=400)
 
     run_params = {
         "tasks": tasks,  # Вместо плоского списка urls передаем список задач
-        "proxy_type": request.form.get("proxy_type") or "http",
-        "dns_mode": request.form.get("dns_mode") or "proxy",
-        "connection_type": request.form.get("connection_type") or "wifi",
-        "proxy_host": request.form.get("proxy_host") or None,
-        "proxy_port": request.form.get("proxy_port") or None,
+        "network": network,
         "timeout_sec": int(request.form.get("timeout_sec") or 60),
         "make_screenshot": bool(request.form.get("make_screenshot")),
         "debug_mode": bool(request.form.get("debug_mode")),

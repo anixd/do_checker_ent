@@ -6,6 +6,7 @@ from typing import Dict, Any
 from config.loader import ConfigStore
 from logging_.engine_logger import get_engine_logger
 from .worker import execute_check
+from providers.soax_session import make_session_id
 
 _engine_logger = get_engine_logger()
 
@@ -61,14 +62,18 @@ def _run_checks_async(run_params: dict[str, Any], run_id: str):
     cfg = ConfigStore.get()
     urls = run_params.get("urls", [])
 
-    # Определяем sticky для всего запуска
-    sticky_policy = run_params.get("sticky_policy", "auto")
-    sticky = (sticky_policy == "on") or (sticky_policy == "auto" and len(urls) > 1)
+    # One SOAX session per checked URL by default. With session_scope="geo"
+    # every URL shares a single session, and therefore a single exit IP -
+    # this run always targets one country, so index 0 covers them all.
+    scope = cfg.soax.session_scope
 
-    # Добавляем run_id и sticky в params для воркера
     task_params = run_params.copy()
     task_params["run_id"] = run_id
-    task_params["sticky"] = sticky
+
+    session_ids = {
+        u: make_session_id(run_id, i if scope == "task" else 0)
+        for i, u in enumerate(urls)
+    }
 
     def worker_task(u: str):
         # log: задача взята в пул.
@@ -77,6 +82,7 @@ def _run_checks_async(run_params: dict[str, Any], run_id: str):
         # Передаем копию словаря + URL в воркер
         task_specific_params = task_params.copy()
         task_specific_params["url"] = u
+        task_specific_params["session_id"] = session_ids[u]
 
         _sse_emit(run_id, {
             "type": "check_started",
@@ -267,6 +273,22 @@ def _run_multi_geo_async(run_params: dict[str, Any], run_id: str):
     _engine_logger.info(f"[{run_id}] Multi-Geo background thread started.")
     cfg = ConfigStore.get()
     tasks = run_params.get("tasks", [])
+    scope = cfg.soax.session_scope
+
+    # Rules are locked on a session's first request: reusing one session ID
+    # across countries would be rejected with 409 SESSION_PARAMS_MISMATCH.
+    # Under scope="geo" the ID is therefore keyed on the country, not the task.
+    geo_index: Dict[str, int] = {}
+    for t in tasks:
+        c = (t.get("country") or "").strip().lower()
+        if c and c not in geo_index:
+            geo_index[c] = len(geo_index)
+
+    for i, t in enumerate(tasks):
+        c = (t.get("country") or "").strip().lower()
+        t["session_id"] = make_session_id(
+            run_id, i if scope == "task" else geo_index.get(c, 0)
+        )
 
     def worker_task(task_item: dict):
         url = task_item["url"]
@@ -287,9 +309,7 @@ def _run_multi_geo_async(run_params: dict[str, Any], run_id: str):
             "url": url,
             "country": country,
             "run_id": run_id,
-            "region_code": None,
-            "city": None,
-            "isp": None
+            "session_id": task_item.get("session_id"),
         })
 
         _sse_emit(run_id, {

@@ -11,6 +11,7 @@ from providers.soax import get_session, ProxySession
 from config.loader import ConfigStore
 from logging_.md_writer import ensure_day_dir, unique_file_path, render_md_card
 from logging_.engine_logger import get_engine_logger
+from providers.soax_session import get_session, ProxySession, sanitize_credentials
 
 try:
     from playwright.sync_api import sync_playwright
@@ -42,13 +43,9 @@ def _normalize_url(raw: str) -> tuple[str, str]:
     return domain, url_full
 
 
-def _requests_proxies(ps: ProxySession, dns_mode: str) -> dict:
-    auth = f"{ps.username}:{ps.password}@"
-    if ps.type == "socks5":
-        scheme = "socks5h" if dns_mode == "proxy" else "socks5"
-    else:
-        scheme = "http"
-    proxy_url = f"{scheme}://{auth}{ps.host}:{ps.port}"
+def _requests_proxies(ps: ProxySession) -> dict:
+    # SOCKS5 is rejected at config load time, so the scheme is always http.
+    proxy_url = ps.proxy_url()
     return {"http": proxy_url, "https": proxy_url}
 
 
@@ -196,7 +193,6 @@ def execute_check(run_params: dict[str, Any]) -> dict:
     timeout_sec = run_params["timeout_sec"]
     make_screenshot = run_params["make_screenshot"]
     debug_mode = run_params.get("debug_mode", False)
-    dns_mode = run_params.get("dns_mode", "proxy")
 
     domain, url_full = _normalize_url(url)
     ts = datetime.now().strftime("%H-%M-%S")
@@ -226,16 +222,16 @@ def execute_check(run_params: dict[str, Any]) -> dict:
         ps = get_session(run_params)
         debug_data = ps.debug_info
 
-        proxies = _requests_proxies(ps, dns_mode)
+        proxies = _requests_proxies(ps)
         log.debug(f"[{run_id_for_log}] Calling _measure_http for {url}...")
         http_status, bytes_count, redirects, timings, sent_headers = _measure_http(url_full, proxies, timeout_sec)
     except Exception as e:
         exc = e
-        notes = str(e)
+        notes = sanitize_credentials(str(e))
         if debug_data is None:
-            debug_data = {"error": str(e)}
+            debug_data = {"error": sanitize_credentials(str(e))}
 
-        log.warning(f"[{run_id_for_log}] _measure_http failed for {url}: {e}")
+        log.warning(f"[{run_id_for_log}] _measure_http failed for {url}: {sanitize_credentials(str(e))}")
 
     # Добавляем хедеры в debug_info (if debug_mode is on)
     if debug_mode and debug_data and sent_headers:
@@ -265,14 +261,17 @@ def execute_check(run_params: dict[str, Any]) -> dict:
             else:
                 notes = f"screenshot: {s_err}"
 
-    geo_str = f"{run_params.get('country') or '-'} / {run_params.get('region_code') or '(any)'} / {run_params.get('city') or '(any)'} / ISP: {run_params.get('isp') or '(any)'}"
-    proxy_str = f"SOAX Port-Mode, ext_ip: {ps.ext_ip if ps else '-'}"
+    geo_str = (run_params.get("country") or "-").upper()
+    proxy_str = (
+        f"SOAX session {ps.session_id or '(none)'}, ext_ip: {ps.ext_ip or '-'}"
+        if ps else "SOAX session not established"
+    )
     md_text = render_md_card(
         domain=domain,
         started=datetime.now().isoformat(timespec="seconds"),
         geo_str=geo_str,
         proxy_str=proxy_str,
-        dns_mode=dns_mode,
+        network=run_params.get("network") or "-",
         timeout_sec=timeout_sec,
         url_show=url_full,
         redirects=redirects,
