@@ -28,6 +28,7 @@ MANIFEST
 CLAUDE.md
 .claude/
 .claudeignore
+dev/
 
 # PyInstaller
 #  Usually these files are written by a python script from a template
@@ -72,7 +73,7 @@ instance/
 .scrapy
 
 # Sphinx documentation
-docs/_build/
+dev/SOAX_docs/_build/
 
 # PyBuilder
 .pybuilder/
