@@ -6,6 +6,7 @@ from typing import Dict, Any
 from config.loader import ConfigStore
 from logging_.engine_logger import get_engine_logger
 from .worker import execute_check
+from logging_.context import bind as bind_log_context
 from providers.soax_session import make_session_id
 
 _engine_logger = get_engine_logger()
@@ -19,8 +20,8 @@ def _sse_emit(run_id: str, payload: dict):
     msg = json.dumps(payload, ensure_ascii=False)
 
     _engine_logger.debug(
-        f"[{run_id}] Emitting SSE event type: {payload.get('type')}, "
-        f"URL: {payload.get('url', 'N/A')}"
+        "Emitting SSE event %s for run %s (url=%s)",
+        payload.get("type"), run_id, payload.get("url", "N/A"),
     )
 
     with _lock:
@@ -29,7 +30,7 @@ def _sse_emit(run_id: str, payload: dict):
         try:
             q.put(msg, block=False)
         except queue.Full:
-            _engine_logger.warning(f"SSE queue full for run_id {run_id}")
+            _engine_logger.warning("SSE queue full for run %s", run_id)
 
 
 def sse_subscribe(run_id: str) -> "queue.Queue[str]":
@@ -57,7 +58,10 @@ def _run_checks_async(run_params: dict[str, Any], run_id: str):
     и делает всю тяжелую работу.
     """
 
-    _engine_logger.info(f"[{run_id}] Background thread started.")
+    # Bound once for the whole run: this thread serves exactly one run_id, so
+    # every line below carries it without being told.
+    bind_log_context(run_id=run_id)
+    _engine_logger.info("Background thread started.")
 
     cfg = ConfigStore.get()
     urls = run_params.get("urls", [])
@@ -76,8 +80,10 @@ def _run_checks_async(run_params: dict[str, Any], run_id: str):
     }
 
     def worker_task(u: str):
-        # log: задача взята в пул.
-        _engine_logger.info(f"[{run_id}] Task started for URL: {u}")
+        # Pool workers are reused, so the context is bound per task rather
+        # than per run - otherwise the previous URL would stick around.
+        bind_log_context(run_id=run_id, url=u)
+        _engine_logger.info("Task started.")
 
         # Передаем копию словаря + URL в воркер
         task_specific_params = task_params.copy()
@@ -94,11 +100,11 @@ def _run_checks_async(run_params: dict[str, Any], run_id: str):
 
         try:
             # log: Перед блокирующим вызовом
-            _engine_logger.debug(f"[{run_id}] Calling execute_check for {u}...")
+            _engine_logger.debug("Calling execute_check...")
             res = execute_check(task_specific_params)
-            _engine_logger.debug(f"[{run_id}] execute_check finished for {u}.")
+            _engine_logger.debug("execute_check finished.")
         except Exception as e:
-            _engine_logger.error(f"[{run_id}] Unhandled exception in execute_check for {u}: {e}", exc_info=True)
+            _engine_logger.error("Unhandled exception in execute_check: %s", e, exc_info=True)
             res = {  # Создаем 'error' результат
                 "classification": "connect_error",
                 "notes": f"Worker failed: {e}",
@@ -114,7 +120,8 @@ def _run_checks_async(run_params: dict[str, Any], run_id: str):
                 png_relative_path = os.path.relpath(res["png_path"], cfg.paths.logs_dir)
                 png_relative_path = png_relative_path.replace(os.path.sep, '/')
             except ValueError:
-                _engine_logger.error(f"[{run_id}] Could not get relative path for screenshot: {res['png_path']}")
+                _engine_logger.error("Could not get relative path for screenshot: %s",
+                                     res["png_path"], exc_info=True)
                 png_relative_path = os.path.basename(res["png_path"])  # fallback на старое поведение
 
         row = {
@@ -133,8 +140,8 @@ def _run_checks_async(run_params: dict[str, Any], run_id: str):
 
     # пул потоков для проверок
     with ThreadPoolExecutor(max_workers=cfg.execution.max_concurrency) as pool:
-        _engine_logger.debug(
-            f"[{run_id}] Submitting {len(urls)} tasks to ThreadPoolExecutor (max_workers={cfg.execution.max_concurrency}).")
+        _engine_logger.debug("Submitting %s tasks to the pool (max_workers=%s).",
+                             len(urls), cfg.execution.max_concurrency)
         futs = [pool.submit(worker_task, u) for u in urls]
         for fut in as_completed(futs):
             try:
@@ -144,10 +151,10 @@ def _run_checks_async(run_params: dict[str, Any], run_id: str):
                     st["rows"].append(row)
                     st["done"] += 1
             except Exception as e:
-                _engine_logger.error(f"[{run_id}] Future failed: {e}", exc_info=True)
+                _engine_logger.error("Future failed: %s", e, exc_info=True)
 
     # завершение запуска
-    _engine_logger.info(f"[{run_id}] All tasks finished.")
+    _engine_logger.info("All tasks finished.")
     st = _runs_state[run_id]
 
     # try:
@@ -164,7 +171,7 @@ def _run_checks_async(run_params: dict[str, Any], run_id: str):
                                   "time_ms": int((time.time() - st["started_at"]) * 1000)},
                        "summary": summary_name})
 
-    _engine_logger.info(f"[{run_id}] 'run_finished' emitted. Unsubscribing SSE.")
+    _engine_logger.info("'run_finished' emitted. Unsubscribing SSE.")
 
     # сигналим обработчику SSE, что пора закрываться
     with _lock:
@@ -173,7 +180,7 @@ def _run_checks_async(run_params: dict[str, Any], run_id: str):
         try:
             q.put(None, block=False)  # отправляем None как сигнал
         except queue.Full:
-            _engine_logger.warning(f"SSE queue full when trying to send None sentinel for run_id {run_id}")
+            _engine_logger.warning("SSE queue full while sending the None sentinel for run %s", run_id)
 
     # отписываемся от SSE, чтобы позволить Response() завершиться
     sse_unsubscribe(run_id)
@@ -190,7 +197,9 @@ def start_run(run_params: dict[str, Any]) -> str:
     ts_folder = datetime.now().strftime("%H-%M-%S") + "_std-check"
     run_params["subfolder"] = ts_folder
 
-    _engine_logger.info(f"[{run_id}] Creating run state (Total: {total} URLs).")
+    # Not bound to the context here: this runs in the request greenlet, which
+    # is reused for later requests on the same connection.
+    _engine_logger.info("[%s] Creating run state (total %s URLs).", run_id, total)
 
     state = {
         "run_id": run_id,
@@ -212,7 +221,7 @@ def start_run(run_params: dict[str, Any]) -> str:
                        "settings": settings_for_sse})
 
     # запук в фоновом потоке
-    _engine_logger.info(f"[{run_id}] Spawning background thread...")
+    _engine_logger.info("[%s] Spawning background thread...", run_id)
     thread = threading.Thread(
         target=_run_checks_async,
         args=(run_params, run_id),
@@ -228,7 +237,7 @@ def start_multi_geo_run(run_params: dict[str, Any]) -> str:
     tasks = run_params.get("tasks", [])
     total = len(tasks)
 
-    _engine_logger.info(f"[{run_id}] Creating Multi-Geo run state (Total: {total} tasks).")
+    _engine_logger.info("[%s] Creating Multi-Geo run state (total %s tasks).", run_id, total)
 
     # Инициализируем состояние запуска
     state = {
@@ -270,7 +279,8 @@ def start_multi_geo_run(run_params: dict[str, Any]) -> str:
 
 
 def _run_multi_geo_async(run_params: dict[str, Any], run_id: str):
-    _engine_logger.info(f"[{run_id}] Multi-Geo background thread started.")
+    bind_log_context(run_id=run_id)
+    _engine_logger.info("Multi-Geo background thread started.")
     cfg = ConfigStore.get()
     tasks = run_params.get("tasks", [])
     scope = cfg.soax.session_scope
@@ -293,6 +303,7 @@ def _run_multi_geo_async(run_params: dict[str, Any], run_id: str):
     def worker_task(task_item: dict):
         url = task_item["url"]
         country = task_item.get("country")
+        bind_log_context(run_id=run_id, url=url)
 
         if "parsing_error" in task_item:
             row = {
@@ -321,7 +332,7 @@ def _run_multi_geo_async(run_params: dict[str, Any], run_id: str):
         try:
             res = execute_check(task_specific)
         except Exception as e:
-            _engine_logger.error(f"[{run_id}] Worker failed for {url}: {e}")
+            _engine_logger.error("Worker failed: %s", e, exc_info=True)
             # АХТУНГ! Нужно вернуть _полную_ структуру, чтобы не упасть ниже
             res = {
                 "classification": "connect_error",
@@ -363,7 +374,7 @@ def _run_multi_geo_async(run_params: dict[str, Any], run_id: str):
                     _runs_state[run_id]["rows"].append(row)
                     _runs_state[run_id]["done"] += 1
             except Exception as e:
-                _engine_logger.error(f"[{run_id}] Multi-Geo Future fatal: {e}")
+                _engine_logger.error("Multi-Geo future failed: %s", e, exc_info=True)
 
     st = _runs_state[run_id]
     _sse_emit(run_id, {

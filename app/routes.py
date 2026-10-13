@@ -130,7 +130,6 @@ def catalog_refresh():
     """
     Запускает обновление каталога в фоновом потоке.
     """
-    log = get_engine_logger()
     log.info("Received request to refresh catalog. Starting background thread...")
 
     # запускаем тяжелую задачу в отдельном потоке

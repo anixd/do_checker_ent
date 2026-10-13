@@ -1,3 +1,4 @@
+import fcntl
 import threading
 import time
 import os
@@ -11,9 +12,16 @@ REMOTE_VERSION_URL = "https://raw.githubusercontent.com/anixd/do_checker_ent/mas
 
 LOCAL_VERSION_FILE = os.path.abspath("./VERSION")
 
+CHECK_INTERVAL_SEC = 3 * 60 * 60
+INITIAL_DELAY_SEC = 20
+
 # Глобальное состояние
 UPDATE_AVAILABLE = False
 _lock = threading.Lock()
+
+# Keeps the flock alive for the lifetime of the process: closing the file or
+# letting it be garbage collected releases the lock.
+_singleton_handle = None
 
 
 def get_update_status() -> bool:
@@ -38,8 +46,8 @@ def check_for_updates_thread():
     Функция для запуска в фоновом потоке (daemon thread).
     Проверяет обновления при старте и каждые 3 часа.
     """
-    log.info("Update checker thread started. Initial check in 20 seconds...")
-    time.sleep(20)  # Даем приложению запуститься
+    log.info("Update checker thread started. Initial check in %s seconds...", INITIAL_DELAY_SEC)
+    time.sleep(INITIAL_DELAY_SEC)  # Даем приложению запуститься
 
     while True:
         try:
@@ -52,7 +60,7 @@ def check_for_updates_thread():
                 remote_version_str = response.text.strip()
             except requests.exceptions.RequestException as e:
                 log.warning(f"Failed to fetch remote VERSION file: {e}")
-                time.sleep(10800)
+                time.sleep(CHECK_INTERVAL_SEC)
                 continue
 
             # 2. Получаем локальный текст версии
@@ -65,7 +73,7 @@ def check_for_updates_thread():
                 return
             except Exception as e:
                 log.error(f"Failed to read local VERSION file: {e}")
-                time.sleep(10800)
+                time.sleep(CHECK_INTERVAL_SEC)
                 continue
 
             # 3. Сравниваем версии (SemVer)
@@ -85,9 +93,47 @@ def check_for_updates_thread():
                 _set_update_status(local_version_str != remote_version_str and remote_version_str != "")
 
             # 4. спим 3 часа
-            time.sleep(10800)
+            time.sleep(CHECK_INTERVAL_SEC)
 
         except Exception as e:
             log.error(f"Unhandled error in update checker thread: {e}", exc_info=True)
-            log.info("Retrying update check in 3 hours...")
-            time.sleep(10800)
+            log.info("Retrying update check in %s seconds...", CHECK_INTERVAL_SEC)
+            time.sleep(CHECK_INTERVAL_SEC)
+
+
+def start_background_checker() -> bool:
+    """
+    Starts the checker in exactly one gunicorn worker.
+
+    create_app() runs once per worker, so the thread used to be started four
+    times over: four requests to GitHub every three hours and every log line
+    about versions printed four times. An flock on a file in the log directory
+    is the cheapest cross-process arbiter available here - no shared state, and
+    the lock is released by the kernel if the worker dies, so a restarted
+    worker can pick the job up.
+    """
+    global _singleton_handle
+
+    from config.loader import ConfigStore
+
+    lock_path = os.path.join(ConfigStore.get().paths.logs_dir, ".version_checker.lock")
+    try:
+        handle = open(lock_path, "w", encoding="utf-8")
+    except OSError as e:
+        log.warning("Could not open %s (%s); update checker not started.", lock_path, e)
+        return False
+
+    try:
+        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        handle.close()
+        log.debug("Update checker already running in another worker; skipping.")
+        return False
+
+    handle.write(f"{os.getpid()}\n")
+    handle.flush()
+    _singleton_handle = handle
+
+    thread = threading.Thread(target=check_for_updates_thread, daemon=True)
+    thread.start()
+    return True

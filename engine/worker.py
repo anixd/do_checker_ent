@@ -1,4 +1,6 @@
 from __future__ import annotations
+import contextlib
+import faulthandler
 import os
 import socket
 import time
@@ -22,6 +24,49 @@ log = get_engine_logger()
 
 screenshot_semaphore: threading.Semaphore | None = None
 _semaphore_lock = threading.Lock()  # lock для инициализации семафора
+
+_watchdog_fh = None
+_watchdog_lock = threading.Lock()
+
+
+@contextlib.contextmanager
+def _hang_watchdog(seconds: int):
+    """
+    Dumps every thread's stack to faulthandler.log if the block it wraps has not
+    finished within `seconds`, then lets it carry on.
+
+    This is the only diagnostic that survives the worst case. A screenshot is
+    the one unbounded operation in a check, and when Playwright wedges inside a
+    C call the interpreter stops running Python altogether: gunicorn's
+    worker_abort hook never fires, and the arbiter kills the worker leaving
+    nothing but "was sent SIGTERM!" behind. dump_traceback_later runs on a
+    watchdog thread in C, so it reports even then.
+
+    The timer is process-global, so only one may be armed at a time. Screenshots
+    are serialised by screenshot_semaphore (screenshots.max_workers, 1 by
+    default); with that raised above 1 the watchdog covers whichever screenshot
+    armed it last, which is why it is only a diagnostic and never load-bearing.
+    """
+    global _watchdog_fh
+
+    with _watchdog_lock:
+        if _watchdog_fh is None:
+            path = os.path.join(ConfigStore.get().paths.logs_dir, "faulthandler.log")
+            try:
+                _watchdog_fh = open(path, "a", encoding="utf-8")
+            except OSError as e:
+                log.warning("Hang watchdog disabled, cannot open %s: %s", path, e)
+
+    if _watchdog_fh is None:
+        yield
+        return
+
+    log.debug("Arming hang watchdog for %ss", seconds)
+    faulthandler.dump_traceback_later(seconds, repeat=False, file=_watchdog_fh, exit=False)
+    try:
+        yield
+    finally:
+        faulthandler.cancel_dump_traceback_later()
 
 
 def _normalize_url(raw: str) -> tuple[str, str]:
@@ -238,7 +283,7 @@ def _take_screenshot(
             browser.close()
         return True, None
     except Exception as e:
-        log.error(f"Screenshot failed for {url}: {e}")
+        log.error("Screenshot failed for %s: %s", url, e, exc_info=True)
         return False, str(e)
 
 
@@ -263,10 +308,11 @@ def execute_check(run_params: dict[str, Any]) -> dict:
         target_dir = os.path.join(day_dir, run_params["subfolder"])
         os.makedirs(target_dir, exist_ok=True)
 
-    run_id_for_log = run_params.get('run_id', 'NO_RUN_ID')
+    # run_id and url are already in the logging context, bound by the pool
+    # task in engine/orchestrator.py - see logging_/context.py.
     url = run_params["url"]
     geo = run_params.get("country")
-    log.debug(f"[{run_id_for_log}] execute_check started for {url}")
+    log.debug("execute_check started.")
 
     timeout_sec = run_params["timeout_sec"]
     make_screenshot = run_params["make_screenshot"]
@@ -296,25 +342,25 @@ def execute_check(run_params: dict[str, Any]) -> dict:
     sent_headers = None
 
     try:
-        log.debug(f"[{run_id_for_log}] Calling get_session for {url}...")
+        log.debug("Calling get_session...")
         ps = get_session(run_params)
         debug_data = ps.debug_info
 
         proxies = _requests_proxies(ps)
 
         if cfg.soax.preflight:
-            log.debug(f"[{run_id_for_log}] Preflight for session {ps.session_id}...")
+            log.debug("Preflight for session %s...", ps.session_id)
             pf_warning = _preflight(ps, proxies)
             if pf_warning:
                 notes = pf_warning
-                log.warning(f"[{run_id_for_log}] {pf_warning} ({url})")
+                log.warning("Preflight warning: %s", pf_warning)
             debug_data["preflight"] = {
                 "ext_ip": ps.ext_ip,
                 "geo_actual": ps.geo_actual,
                 "warning": pf_warning,
             }
 
-        log.debug(f"[{run_id_for_log}] Calling _measure_http for {url}...")
+        log.debug("Calling _measure_http...")
         http_status, bytes_count, redirects, timings, sent_headers = _measure_http(
             url_full, proxies, timeout_sec
         )
@@ -324,7 +370,7 @@ def execute_check(run_params: dict[str, Any]) -> dict:
         if debug_data is None:
             debug_data = {}
         debug_data["soax_error"] = {"code": e.code, "detail": e.detail}
-        log.error(f"[{run_id_for_log}] Gateway rejected the request for {url}: {e}")
+        log.error("Gateway rejected the request: %s", e)
     except Exception as e:
         exc = e
         # requests embeds the full proxy URL - package password included -
@@ -332,31 +378,33 @@ def execute_check(run_params: dict[str, Any]) -> dict:
         notes = sanitize_credentials(str(e))
         if debug_data is None:
             debug_data = {"error": sanitize_credentials(str(e))}
-        log.warning(
-            f"[{run_id_for_log}] _measure_http failed for {url}: "
-            f"{sanitize_credentials(str(e))}"
-        )
+        # sanitize_credentials: requests embeds the full proxy URL, package
+        # password included, in its exception messages.
+        log.warning("_measure_http failed: %s", sanitize_credentials(str(e)))
 
     # Добавляем хедеры в debug_info (if debug_mode is on)
     if debug_mode and debug_data and sent_headers:
         debug_data["http_request_headers"] = sent_headers
 
     result = _classify(exc, http_status, timeout_sec)
-    log.debug(f"[{run_id_for_log}] Result for {url}: {result}")
+    log.debug("Result: %s", result)
 
     # логика скриншота, с семафором
     if make_screenshot and result == "success":
         png_path = unique_file_path(target_dir, base_name, "png")
         screenshot_timeout = timeout_sec + cfg.screenshots.wait_after_load_sec + 5
 
-        log.info(f"Acquiring screenshot semaphore for {url}...")
+        log.info("Acquiring screenshot semaphore...")
         with screenshot_semaphore:
-            log.info(f"[{run_id_for_log}] Semaphore acquired for {url}. Taking screenshot...")
-            ok, s_err = _take_screenshot(
-                ps, url_full, png_path, screenshot_timeout,
-                cfg.screenshots.width, cfg.screenshots.height
-            )
-            log.info(f"[{run_id_for_log}] Semaphore released for {url}.")
+            log.info("Semaphore acquired. Taking screenshot...")
+            # Playwright is given screenshot_timeout; anything past that plus a
+            # margin means it is not going to come back on its own.
+            with _hang_watchdog(screenshot_timeout + 10):
+                ok, s_err = _take_screenshot(
+                    ps, url_full, png_path, screenshot_timeout,
+                    cfg.screenshots.width, cfg.screenshots.height
+                )
+            log.info("Semaphore released.")
 
         if not ok:
             png_path = None  # don't link to failed screenshot !!!
@@ -400,7 +448,7 @@ def execute_check(run_params: dict[str, Any]) -> dict:
         debug_info=debug_data if debug_mode else None
     )
 
-    log.debug(f"[{run_id_for_log}] Writing .md log for {url} to {md_path}")
+    log.debug("Writing .md card to %s", md_path)
     with open(md_path, "w", encoding="utf-8") as f:
         f.write(md_text)
 
