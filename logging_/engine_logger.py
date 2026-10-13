@@ -72,6 +72,11 @@ def logging_dict(log_dir: str, level: str = "INFO") -> dict:
                 "formatter": "main",
                 "filters": ["ctx"],
             },
+            # All gunicorn workers append to this one file. There is no
+            # cross-process locking: it holds because a FileHandler opens in
+            # O_APPEND mode and writes each record in a single write() call,
+            # which the kernel does not interleave for a reasonably short line.
+            # A traceback arrives as one record too, so it stays in one piece.
             "engine_file": {
                 "class": "logging.FileHandler",
                 "filename": os.path.join(log_dir, ENGINE_LOG),

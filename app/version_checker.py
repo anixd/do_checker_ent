@@ -1,4 +1,5 @@
 import fcntl
+import tempfile
 import threading
 import time
 import os
@@ -114,9 +115,11 @@ def start_background_checker() -> bool:
     """
     global _singleton_handle
 
-    from config.loader import ConfigStore
-
-    lock_path = os.path.join(ConfigStore.get().paths.logs_dir, ".version_checker.lock")
+    # Deliberately not in the log directory: that is a bind mount, and Docker
+    # Desktop does not honour advisory locks on it - with four workers two of
+    # them took the "exclusive" lock at once. The container's own /tmp is a
+    # normal filesystem, where flock behaves.
+    lock_path = os.path.join(tempfile.gettempdir(), "do_checker_ent.version_checker.lock")
     try:
         handle = open(lock_path, "w", encoding="utf-8")
     except OSError as e:
