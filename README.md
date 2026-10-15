@@ -199,7 +199,7 @@ Most things are best set in `.env`. Two structures live only in `app.yaml`.
 soax:
   host: proxy.soax.com
   port: 1337
-  proxy_type: http          # http only; SOCKS5 breaks screenshot auth
+  transport: http           # http | socks5; empty means "no default, choose per run"
   session_scope: task       # task | geo
   on_error: retry           # replace | retry | fail
   on_error_retries: 3       # 1..10
@@ -211,6 +211,21 @@ soax:
 node immediately, `retry` retries on the same one up to N times, `fail` returns
 the error as-is. `retry` is the default — it survives a single flaky node
 without silently hiding a genuine outage.
+
+`transport` is only the value the forms preselect — a run carries its own, picked
+in the **Transport** dropdown on either checking page. Leave the field empty (or
+delete the line) and there is no default at all: the dropdown starts unselected
+and a run without an explicit transport is refused. An unrecognised value is
+treated the same way, with a warning in the log rather than a refusal to start —
+which transport suits the work at hand is the operator's call, not a reason to
+keep the app down. The old name `proxy_type` still works as a synonym, so an
+existing `app.yaml` keeps its default after an upgrade.
+
+Why both transports exist: the same mirror can answer differently over HTTP and
+over SOCKS5, so checking over one is not evidence about the other. **DNS resolve**
+decides where the hostname is resolved — `on exit node` (the default, a
+geo-targeted check whose DNS happened in our datacentre is only half a check) or
+`local`.
 
 `preflight` adds one lightweight request per session against SOAX's own IP
 lookup. It fills in the exit IP and the node's real location, and turns gateway
@@ -299,9 +314,17 @@ documented. Until that access materialises, targeting is by country only.
 **The country list is maintained by hand.** Now there is no way to refresh it from
 SOAX. Copy `soax_geo.json` between installations rather than rebuilding it.
 
-**Screenshots require an HTTP proxy.** Chromium cannot authenticate against a
-SOCKS5 proxy, so `proxy_type` is restricted to `http` and the app refuses to
-start otherwise.
+**Screenshots always go over HTTP.** Chromium cannot authenticate against a
+SOCKS5 proxy, and without authentication the gateway carries no targeting rules —
+so a screenshot taken during a SOCKS5 run goes over HTTP instead, reusing the
+same session and therefore the same exit node. The card says so in its notes.
+A screenshot taken *through* SOCKS5 needs a local shim and is planned separately.
+
+**Gateway errors are invisible over SOCKS5.** A refusal that HTTP reports as
+`400 ERR_INVALID_VALUE` with an explanation arrives over SOCKS5 as a nameless
+connection failure — a wrong rule and a wrong password look identical. This is
+why `preflight` goes over HTTP even for a SOCKS5 run, and why turning it off
+costs more than it used to.
 
 **A SOAX session expires after 60 seconds of inactivity.** If a screenshot waits a
 long time for its slot, its session may have lapsed and Chromium will land on a

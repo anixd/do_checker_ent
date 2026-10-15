@@ -8,15 +8,17 @@ import shutil
 import os
 from engine.orchestrator import start_run, get_run_state
 from engine.tasks import (
+    ALLOWED_RESOLVE,
+    ALLOWED_TRANSPORTS,
     FORM_NETWORKS,
-    Channel,
     RunOptions,
+    make_channel,
     build_all_country_tasks,
     build_multi_geo_tasks,
     build_single_country_tasks,
 )
 from config.loader import ConfigStore
-from providers.registry import get_provider
+from providers.registry import available_providers, get_provider
 from providers.soax import CatalogStore, refresh_catalog_data
 from logging_.engine_logger import get_engine_logger
 from .utils import render_markdown_file
@@ -26,19 +28,21 @@ log = get_engine_logger()
 bp = Blueprint("routes", __name__)
 
 
-def _channel_from_form(form) -> Channel:
+def _channel_from_form(form):
     """
-    Reads the channel the run should use.
+    Reads the channel the run should use, and raises ValueError with a message
+    for the submitter if it cannot.
 
-    The three selectors land in the UI in Этапе 3а; until then the form carries
-    nothing and the defaults reproduce today's behaviour exactly. The provider is
+    The transport falls back to the configured default and, if there is none,
+    the run is refused rather than guessed (решение 11). The provider is
     resolved here so that an unknown or not-yet-implemented one fails on the
-    request with a readable message instead of inside a worker thread.
+    request instead of inside a worker thread.
     """
-    channel = Channel(
-        provider=(form.get("provider") or "soax").strip().lower(),
-        transport=(form.get("transport") or "http").strip().lower(),
-        resolve=(form.get("resolve") or "remote").strip().lower(),
+    configured_default = ConfigStore.get().soax.transport
+    channel = make_channel(
+        provider=form.get("provider"),
+        transport=form.get("transport") or configured_default,
+        resolve=form.get("resolve"),
     )
     get_provider(channel.provider)
     return channel
@@ -59,6 +63,11 @@ def index():
             soax_port_default=cfg.soax.port,
             timeout_sec=cfg.execution.timeout_sec,
             screenshots_enabled=cfg.screenshots.enabled_default,
+            transport=cfg.soax.transport,
+            resolve="remote",
+            transports=ALLOWED_TRANSPORTS,
+            resolve_modes=ALLOWED_RESOLVE,
+            providers=available_providers(),
         ),
         logs_dir=cfg.paths.logs_dir,
     )
@@ -299,6 +308,11 @@ def multi_geo_page():
             soax_port_default=cfg.soax.port,
             timeout_sec=cfg.execution.timeout_sec,
             screenshots_enabled=cfg.screenshots.enabled_default,
+            transport=cfg.soax.transport,
+            resolve="remote",
+            transports=ALLOWED_TRANSPORTS,
+            resolve_modes=ALLOWED_RESOLVE,
+            providers=available_providers(),
         ),
         logs_dir=cfg.paths.logs_dir,
     )

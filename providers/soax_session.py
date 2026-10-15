@@ -194,9 +194,17 @@ class ProxySession:
     geo_actual: Dict[str, Any] | None = None
     debug_info: Dict[str, Any] = field(default_factory=dict)
 
-    def proxy_url(self) -> str:
-        """Full proxy URL. Never log this - use safe_repr() instead."""
-        return f"{self.type}://{self.username}:{self.password}@{self.host}:{self.port}"
+    def proxy_url(self, scheme: str | None = None) -> str:
+        """
+        Full proxy URL. Never log this - use safe_repr() instead.
+
+        The scheme is an argument because one session is reached over two of
+        them: the check uses the run's transport (http, socks5h or socks5) while
+        the preflight and the screenshot always go over http. The credentials and
+        therefore the exit node are identical - the transport is not part of the
+        rule string, so the gateway sees the same session.
+        """
+        return f"{scheme or self.type}://{self.username}:{self.password}@{self.host}:{self.port}"
 
     def safe_repr(self) -> str:
         """Human-readable identity of the session with no secrets in it."""
@@ -211,6 +219,7 @@ def get_session(params: dict[str, Any]) -> ProxySession:
         country     - ISO 3166-1 alpha-2, lowercase
         network     - res | mob | res_mob | any
         session_id  - produced by make_session_id() in the orchestrator
+        transport   - http | socks5, the run's transport (default http)
 
     Everything else (host, port, protocol, error handling) comes from config.
     """
@@ -228,6 +237,7 @@ def get_session(params: dict[str, Any]) -> ProxySession:
     country = (params.get("country") or "").strip().lower()
     network = (params.get("network") or "").strip().lower()
     session_id = params.get("session_id")
+    transport = (params.get("transport") or "http").strip().lower()
 
     username = build_username(
         country=country,
@@ -245,15 +255,17 @@ def get_session(params: dict[str, Any]) -> ProxySession:
         "host": cfg.host,
         "port": cfg.port,
         "session_scope": cfg.session_scope,
+        "transport": transport,
         "source_params": {
             "country": country,
             "network": network,
             "session_id": session_id,
+            "transport": transport,
         },
     }
 
     return ProxySession(
-        type=cfg.proxy_type,
+        type=transport,
         host=cfg.host,
         port=cfg.port,
         username=username,

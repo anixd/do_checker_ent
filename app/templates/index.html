@@ -56,20 +56,7 @@
           </select>
         </div>
 
-{#        <div class="form-group">#}
-{#          <label for="proxy_type">Protocol</label>#}
-{#          <select name="proxy_type" id="proxy_type">#}
-{#            <option value="http" {% if defaults.proxy_type=='http' %}selected{% endif %}>HTTP</option>#}
-{#            <option value="socks5" {% if defaults.proxy_type=='socks5' %}selected{% endif %}>SOCKS5</option>#}
-{#          </select>#}
-{#        </div>#}
-{#        <div class="form-group">#}
-{#          <label for="dns_mode">DNS</label>#}
-{#          <select name="dns_mode" id="dns_mode">#}
-{#            <option value="proxy" {% if defaults.dns_mode=='proxy' %}selected{% endif %}>via proxy</option>#}
-{#            <option value="local" {% if defaults.dns_mode=='local' %}selected{% endif %}>local</option>#}
-{#          </select>#}
-{#        </div>#}
+        {% include "_channel_fields.html" %}
 
       </div>
     </fieldset>
