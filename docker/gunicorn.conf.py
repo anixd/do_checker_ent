@@ -134,7 +134,14 @@ def worker_abort(worker):
 
 
 def worker_int(worker):
-    _dump_traceback("Worker interrupted (SIGINT/SIGQUIT)", worker.pid, worker.log)
+    """
+    SIGINT/SIGQUIT is a graceful stop, and gunicorn uses it for ordinary events:
+    `--reload` picking up a changed file, `docker compose restart`, Ctrl+C. No
+    traceback here - dumping one on every reload filled faulthandler.log with
+    stacks of perfectly healthy shutdowns. Abnormal deaths go through
+    worker_abort, which does dump.
+    """
+    worker.log.info("Worker interrupted (SIGINT/SIGQUIT), shutting down (pid=%s)", worker.pid)
 
 
 def worker_exit(server, worker):
