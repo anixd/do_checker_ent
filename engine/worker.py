@@ -2,18 +2,18 @@ from __future__ import annotations
 import contextlib
 import faulthandler
 import os
-import socket
 import time
 import urllib.parse
 import requests
 import threading
-import json
 from datetime import datetime
-from typing import Any
 from config.loader import ConfigStore
+from engine.tasks import CheckTask, RunOptions
 from logging_.md_writer import ensure_day_dir, unique_file_path, render_md_card
 from logging_.engine_logger import get_engine_logger
-from providers.soax_session import get_session, ProxySession, sanitize_credentials, SoaxGatewayError
+from providers.base import Provider, ProviderGatewayError
+from providers.registry import get_provider
+from providers.soax_session import ProxySession, sanitize_credentials
 
 try:
     from playwright.sync_api import sync_playwright
@@ -88,80 +88,8 @@ def _normalize_url(raw: str) -> tuple[str, str]:
     return domain, url_full
 
 
-def _requests_proxies(ps: ProxySession) -> dict:
-    # SOCKS5 is rejected at config load time, so the scheme is always http.
-    proxy_url = ps.proxy_url()
-    return {"http": proxy_url, "https": proxy_url}
-
-
-# Plain HTTP on purpose. Over HTTPS the proxy answers during CONNECT and
-# requests raises ProxyError without exposing the response headers, so the
-# X-SOAX-* diagnostics would be lost. Over HTTP the 301 to HTTPS only happens
-# once the proxy has already accepted the request.
-PREFLIGHT_URL = "http://checker.soax.com/api/ipinfo"
-PREFLIGHT_TIMEOUT_SEC = 20
-
-
-def _soax_error(resp: requests.Response) -> tuple[str | None, str | None]:
-    """Extracts the gateway's own error headers, if it set any."""
-    return resp.headers.get("X-SOAX-Error"), resp.headers.get("X-SOAX-Detail")
-
-
-def _preflight(ps: ProxySession, proxies: dict) -> str | None:
-    """
-    Opens the session and records which exit node it landed on.
-
-    Populates ps.ext_ip and ps.geo_actual. Raises SoaxGatewayError when the
-    gateway refuses the request - there is no point checking sites through a
-    proxy that will refuse every one of them.
-
-    Returns a warning string when the lookup itself failed but the proxy is
-    fine (checker.soax.com being down is not our problem), or None on success.
-    """
-    try:
-        resp = requests.get(
-            PREFLIGHT_URL,
-            proxies=proxies,
-            timeout=PREFLIGHT_TIMEOUT_SEC,
-            allow_redirects=True,
-        )
-    except requests.exceptions.RequestException as e:
-        return f"preflight failed: {sanitize_credentials(str(e))}"
-
-    code, detail = _soax_error(resp)
-    if code:
-        raise SoaxGatewayError(code, detail, resp.status_code)
-
-    if resp.status_code != 200:
-        return f"preflight returned HTTP {resp.status_code}"
-
-    try:
-        data = resp.json().get("data") or {}
-    except (ValueError, json.JSONDecodeError):
-        return "preflight returned a non-JSON body"
-
-    ps.ext_ip = data.get("ip") or None
-    ps.geo_actual = {
-        "country_code": (data.get("country_code") or "").lower(),
-        "region": data.get("region") or "",
-        "city": data.get("city") or "",
-        "isp": data.get("isp") or data.get("aso") or "",
-        "asn": data.get("asn"),
-    }
-
-    if not ps.ext_ip:
-        return "preflight response carried no IP"
-
-    # A wrong exit country makes the whole check meaningless, so surface it
-    # rather than quietly reporting "available in az" from a node in Germany.
-    actual_cc = ps.geo_actual["country_code"]
-    if actual_cc and actual_cc != ps.country:
-        return f"geo mismatch: requested {ps.country}, exit node is in {actual_cc}"
-
-    return None
-
-
-def _measure_http(url: str, proxies: dict, timeout_sec: int, max_redirects: int = 5):
+def _measure_http(url: str, proxies: dict, timeout_sec: int, provider: Provider,
+                  max_redirects: int = 5):
     timings = {"dns_ms": None, "tcp_ms": None, "tls_ms": None, "ttfb_ms": None, "total_ms": None}
     redirects = []
     http_status = None
@@ -186,11 +114,10 @@ def _measure_http(url: str, proxies: dict, timeout_sec: int, max_redirects: int 
     try:
         resp = sess.get(url, proxies=proxies, timeout=timeout_sec, stream=True, allow_redirects=True)
 
-        # The first hop is plain HTTP (see _normalize_url), so a gateway
-        # rejection arrives as a normal response with its headers intact.
-        code, detail = _soax_error(resp)
-        if code:
-            raise SoaxGatewayError(code, detail, resp.status_code)
+        # The first hop is plain HTTP (see _normalize_url), so a provider's
+        # rejection arrives as a normal response with its headers intact and
+        # only the provider can recognise it.
+        provider.check_response(resp)
 
         http_status = resp.status_code
         first_chunk = next(resp.iter_content(chunk_size=1024), b"")
@@ -205,36 +132,13 @@ def _measure_http(url: str, proxies: dict, timeout_sec: int, max_redirects: int 
         for r in resp.history:
             redirects.append((r.status_code, r.url, r.headers.get('Location', '')))
 
-    except (requests.exceptions.RequestException, SoaxGatewayError) as e:
+    except (requests.exceptions.RequestException, ProviderGatewayError) as e:
         end = time.time()
         timings["total_ms"] = int((end - start) * 1000)
         raise e
     end = time.time()
     timings["total_ms"] = int((end - start) * 1000)
     return http_status, bytes_count, redirects, timings, headers
-
-
-def _classify(exc: Exception | None, http_status: int | None, timeout_sec: int) -> str:
-    # Checked first: a gateway rejection is a configuration or quota problem,
-    # not a property of the site being checked.
-    if isinstance(exc, SoaxGatewayError):
-        return "proxy_error"
-    if exc:
-        s = str(exc).lower()
-        if "name or service not known" in s or "nodename nor servname" in s or "dns" in s:
-            return "dns_error"
-        if "timed out" in s or "timeout" in s:
-            return "timeout"
-        if "ssl" in s or "tls" in s:
-            return "tls_error"
-        return "connect_error"
-    if http_status is None:
-        return "connect_error"
-    if 200 <= http_status < 400:
-        return "success"
-    if 400 <= http_status < 600:
-        return "http_error"
-    return "http_error"
 
 
 def _take_screenshot(
@@ -287,7 +191,14 @@ def _take_screenshot(
         return False, str(e)
 
 
-def execute_check(run_params: dict[str, Any]) -> dict:
+def execute_check(task: CheckTask, options: RunOptions) -> dict:
+    """
+    Runs one check and writes its Markdown card.
+
+    Takes a CheckTask and the run's options instead of the old flat dict, so the
+    two orchestrator paths can share it, and reaches the proxy service only
+    through the provider seam (providers/base.py) - nothing here names SOAX.
+    """
     global screenshot_semaphore
     cfg = ConfigStore.get()
 
@@ -304,19 +215,20 @@ def execute_check(run_params: dict[str, Any]) -> dict:
     day_dir = ensure_day_dir(logs_dir)
 
     target_dir = day_dir
-    if run_params.get("subfolder"):
-        target_dir = os.path.join(day_dir, run_params["subfolder"])
+    if options.subfolder:
+        target_dir = os.path.join(day_dir, options.subfolder)
         os.makedirs(target_dir, exist_ok=True)
 
     # run_id and url are already in the logging context, bound by the pool
     # task in engine/orchestrator.py - see logging_/context.py.
-    url = run_params["url"]
-    geo = run_params.get("country")
+    url = task.url
+    geo = task.country
     log.debug("execute_check started.")
 
-    timeout_sec = run_params["timeout_sec"]
-    make_screenshot = run_params["make_screenshot"]
-    debug_mode = run_params.get("debug_mode", False)
+    provider = get_provider(options.channel.provider)
+    timeout_sec = options.timeout_sec
+    make_screenshot = options.make_screenshot
+    debug_mode = options.debug_mode
 
     domain, url_full = _normalize_url(url)
     ts = datetime.now().strftime("%H-%M-%S")
@@ -342,18 +254,18 @@ def execute_check(run_params: dict[str, Any]) -> dict:
     sent_headers = None
 
     try:
-        log.debug("Calling get_session...")
-        ps = get_session(run_params)
+        log.debug("Building the provider session (%s)...", provider.name)
+        ps = provider.build_session(task, options)
         debug_data = ps.debug_info
 
-        proxies = _requests_proxies(ps)
+        proxies = provider.proxies_for(ps, options.channel)
 
-        if cfg.soax.preflight:
-            log.debug("Preflight for session %s...", ps.session_id)
-            pf_warning = _preflight(ps, proxies)
-            if pf_warning:
-                notes = pf_warning
-                log.warning("Preflight warning: %s", pf_warning)
+        log.debug("Preflight for session %s...", ps.session_id)
+        pf_warning = provider.preflight(ps)
+        if pf_warning:
+            notes = pf_warning
+            log.warning("Preflight warning: %s", pf_warning)
+        if ps.ext_ip or ps.geo_actual or pf_warning:
             debug_data["preflight"] = {
                 "ext_ip": ps.ext_ip,
                 "geo_actual": ps.geo_actual,
@@ -362,15 +274,15 @@ def execute_check(run_params: dict[str, Any]) -> dict:
 
         log.debug("Calling _measure_http...")
         http_status, bytes_count, redirects, timings, sent_headers = _measure_http(
-            url_full, proxies, timeout_sec
+            url_full, proxies, timeout_sec, provider
         )
-    except SoaxGatewayError as e:
+    except ProviderGatewayError as e:
         exc = e
         notes = str(e)
         if debug_data is None:
             debug_data = {}
-        debug_data["soax_error"] = {"code": e.code, "detail": e.detail}
-        log.error("Gateway rejected the request: %s", e)
+        debug_data["gateway_error"] = {"code": e.code, "detail": e.detail}
+        log.error("Provider gateway rejected the request: %s", e)
     except Exception as e:
         exc = e
         # requests embeds the full proxy URL - package password included -
@@ -386,7 +298,7 @@ def execute_check(run_params: dict[str, Any]) -> dict:
     if debug_mode and debug_data and sent_headers:
         debug_data["http_request_headers"] = sent_headers
 
-    result = _classify(exc, http_status, timeout_sec)
+    result = provider.classify(exc, http_status)
     log.debug("Result: %s", result)
 
     # логика скриншота, с семафором
@@ -413,7 +325,7 @@ def execute_check(run_params: dict[str, Any]) -> dict:
             else:
                 notes = f"screenshot: {s_err}"
 
-    geo_str = (run_params.get("country") or "-").upper()
+    geo_str = (task.country or "-").upper()
     if ps and ps.geo_actual:
         g = ps.geo_actual
         actual = " / ".join(x for x in (
@@ -435,7 +347,7 @@ def execute_check(run_params: dict[str, Any]) -> dict:
         started=datetime.now().isoformat(timespec="seconds"),
         geo_str=geo_str,
         proxy_str=proxy_str,
-        network=run_params.get("network") or "-",
+        network=options.network or "-",
         timeout_sec=timeout_sec,
         url_show=url_full,
         redirects=redirects,

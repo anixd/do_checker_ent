@@ -7,17 +7,41 @@ import threading
 import shutil
 import os
 from engine.orchestrator import start_run, get_run_state
+from engine.tasks import (
+    FORM_NETWORKS,
+    Channel,
+    RunOptions,
+    build_all_country_tasks,
+    build_multi_geo_tasks,
+    build_single_country_tasks,
+)
 from config.loader import ConfigStore
+from providers.registry import get_provider
 from providers.soax import CatalogStore, refresh_catalog_data
 from logging_.engine_logger import get_engine_logger
 from .utils import render_markdown_file
-import urllib.parse
-
-FORM_NETWORKS = ("res", "mob", "res_mob")
 
 log = get_engine_logger()
 
 bp = Blueprint("routes", __name__)
+
+
+def _channel_from_form(form) -> Channel:
+    """
+    Reads the channel the run should use.
+
+    The three selectors land in the UI in Этапе 3а; until then the form carries
+    nothing and the defaults reproduce today's behaviour exactly. The provider is
+    resolved here so that an unknown or not-yet-implemented one fails on the
+    request with a readable message instead of inside a worker thread.
+    """
+    channel = Channel(
+        provider=(form.get("provider") or "soax").strip().lower(),
+        transport=(form.get("transport") or "http").strip().lower(),
+        resolve=(form.get("resolve") or "remote").strip().lower(),
+    )
+    get_provider(channel.provider)
+    return channel
 
 
 @bp.get("/")
@@ -47,14 +71,6 @@ def launch_run():
         log.warning("Run rejected: No URLs provided.")
         return Response("No URLs provided", status=400)
 
-    # Приводим к lowercase, чистим пробелы и убираем дубликаты, сохраняя порядок
-    raw_list = [normalize_url_complex(u) for u in urls_raw.splitlines() if u.strip()]
-    urls = list(dict.fromkeys(raw_list))
-
-    if not urls:
-        log.warning("Run rejected: No valid URLs after normalization.")
-        return Response("No valid URLs provided", status=400)
-
     country_code = (request.form.get("country") or "").strip().lower()
     if not country_code:
         log.warning("Run rejected: Country is required.")
@@ -70,48 +86,40 @@ def launch_run():
             "Network type is required (residential / mobile / both)", status=400
         )
 
-    # Обработка режима ALL
+    try:
+        channel = _channel_from_form(request.form)
+    except ValueError as e:
+        log.warning("Run rejected: %s", e)
+        return Response(str(e), status=400)
+
     if country_code == "all":
-        from engine.orchestrator import start_multi_geo_run
+        # ALL is the Multi-Geo mechanism with the catalog as the country list,
+        # so it gets the same label and the same log layout.
+        countries = [c["code"] for c in CatalogStore.get_countries()]
+        tasks = build_all_country_tasks(urls_raw, countries)
+        label = "multi-geo"
+    else:
+        tasks = build_single_country_tasks(urls_raw, country_code)
+        label = "std-check"
 
-        all_countries = CatalogStore.get_countries()
-        tasks = []
-        for u in urls:
-            for c in all_countries:
-                tasks.append({
-                    "url": u,
-                    "country": c["code"]
-                })
+    if not tasks:
+        log.warning("Run rejected: No valid URLs after normalization.")
+        return Response("No valid URLs provided", status=400)
 
-        run_params = {
-            "tasks": tasks,
-            "network": network,
-            "timeout_sec": int(request.form.get("timeout_sec") or 60),
-            "make_screenshot": bool(request.form.get("make_screenshot")),
-            "debug_mode": bool(request.form.get("debug_mode")),
-            "multi_geo": True
-        }
-
-        log.info(
-            f"Accepted ALL-country run request. URLs: {len(urls)}, Tasks: {len(tasks)}."
-        )
-        run_id = start_multi_geo_run(run_params)
-        return jsonify({"run_id": run_id}), 202
-
-    # Стандартный режим (одна страна)
-    run_params = {
-        "urls": urls,
-        "country": country_code,
-        "network": network,
-        "timeout_sec": int(request.form.get("timeout_sec") or 60),
-        "make_screenshot": bool(request.form.get("make_screenshot")),
-        "debug_mode": bool(request.form.get("debug_mode")),
-    }
+    options = RunOptions(
+        label=label,
+        channel=channel,
+        network=network,
+        timeout_sec=int(request.form.get("timeout_sec") or 60),
+        make_screenshot=bool(request.form.get("make_screenshot")),
+        debug_mode=bool(request.form.get("debug_mode")),
+    )
 
     log.info(
-        f"Accepted standard run request. URLs: {len(urls)}, Country: {country_code}."
+        "Accepted %s run request: %s tasks, country=%s, channel=%s.",
+        label, len(tasks), country_code, channel.slug,
     )
-    run_id = start_run(run_params)
+    run_id = start_run(tasks, options)
     return jsonify({"run_id": run_id}), 202
 
 
@@ -299,9 +307,7 @@ def multi_geo_page():
 @bp.post("/run-multi-geo")
 def launch_multi_geo_run():
     urls_raw = (request.form.get("urls") or "").strip()
-    lines = [line.strip() for line in urls_raw.splitlines() if line.strip()]
-
-    if not lines:
+    if not urls_raw:
         log.warning("Multi-Geo Run rejected: No input provided.")
         return Response("No URLs and countries provided", status=400)
 
@@ -312,98 +318,26 @@ def launch_multi_geo_run():
             "Network type is required (residential / mobile / both)", status=400
         )
 
-    tasks = []
-    seen_tasks = set()
-    seen_errors = set()
+    try:
+        channel = _channel_from_form(request.form)
+    except ValueError as e:
+        log.warning("Multi-Geo Run rejected: %s", e)
+        return Response(str(e), status=400)
 
-    def _add_error(url_err: str, err_msg: str):
-        err_key = (url_err, err_msg)
-        if err_key not in seen_errors:
-            tasks.append({
-                "url": url_err,
-                "country": None,
-                "parsing_error": err_msg
-            })
-            seen_errors.add(err_key)
-
-    for line in lines:
-        parts = line.split()
-
-        if len(parts) < 2:
-            _add_error(
-                parts[0].lower() if parts else "Unknown",
-                "Invalid format (expected: url cc)"
-            )
-            continue
-
-        # домен нормализуем, local path сохраняем
-        url = normalize_url_complex(parts[0])
-        country = parts[1].lower()
-
-        # Caught here so a typo shows up as a per-row parsing error instead of
-        # an opaque "Worker failed" once the provider rejects the rule string.
-        if len(country) != 2 or not country.isalpha():
-            _add_error(url, f"Invalid country code: {parts[1]!r} (expected 2 letters)")
-            continue
-
-        task_key = (url, country)
-        if task_key not in seen_tasks:
-            tasks.append({
-                "url": url,
-                "country": country
-            })
-            seen_tasks.add(task_key)
-
+    tasks = build_multi_geo_tasks(urls_raw)
     if not tasks:
         return Response("No valid tasks found", status=400)
 
-    run_params = {
-        "tasks": tasks,  # Вместо плоского списка urls передаем список задач
-        "network": network,
-        "timeout_sec": int(request.form.get("timeout_sec") or 60),
-        "make_screenshot": bool(request.form.get("make_screenshot")),
-        "debug_mode": bool(request.form.get("debug_mode")),
-        "multi_geo": True  # Флаг для оркестратора
-    }
+    options = RunOptions(
+        label="multi-geo",
+        channel=channel,
+        network=network,
+        timeout_sec=int(request.form.get("timeout_sec") or 60),
+        make_screenshot=bool(request.form.get("make_screenshot")),
+        debug_mode=bool(request.form.get("debug_mode")),
+    )
 
-    log.info(f"Accepted /run-multi-geo request. Lines: {len(tasks)}. Starting run...")
-
-    # Вызываем новую функцию в оркестраторе
-    from engine.orchestrator import start_multi_geo_run
-    run_id = start_multi_geo_run(run_params)
-
+    log.info("Accepted /run-multi-geo request: %s tasks, channel=%s.",
+             len(tasks), channel.slug)
+    run_id = start_run(tasks, options)
     return jsonify({"run_id": run_id}), 202
-
-
-def normalize_url_complex(raw_url: str) -> str:
-    """
-    Приводит домен к нижнему регистру, сохраняя регистр local path и параметров.
-    Domain.COM/LoCaL_PatH -> domain.com/LoCaL_PatH
-    """
-    url = raw_url.strip()
-    if not url:
-        return ""
-
-    # Добавляем временную схему, если её нет, для корректного парсинга
-    has_scheme = "://" in url
-    parse_url = url if has_scheme else f"http://{url}"
-
-    try:
-        parsed = urllib.parse.urlsplit(parse_url)
-        # собираем обратно: домен в lower, остальное как есть
-        netloc = parsed.netloc.lower()
-        path = parsed.path
-        query = parsed.query
-        fragment = parsed.fragment
-
-        # пересобираем без схемы, если её не было изначально
-        scheme = parsed.scheme + "://" if has_scheme else ""
-        new_url = f"{scheme}{netloc}{path}"
-        if query:
-            new_url += f"?{query}"
-        if fragment:
-            new_url += f"#{fragment}"
-        return new_url
-    except Exception:
-        # Если парсер упал, возвращаем как есть (fallback)
-        return url
