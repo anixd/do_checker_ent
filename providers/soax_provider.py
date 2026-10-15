@@ -9,8 +9,9 @@ engine/worker.py now goes through providers/registry.py and names no provider.
 
 from __future__ import annotations
 
+import contextlib
 import json
-from typing import Any
+from typing import Any, Iterator
 
 import requests
 
@@ -18,7 +19,8 @@ from config.loader import ConfigStore
 from engine.classify import classify_transport
 from logging_.engine_logger import get_engine_logger
 
-from .base import ProviderGatewayError
+from .base import ProviderGatewayError, ScreenshotProxy
+from .socks_shim import local_socks5_shim
 from .soax_session import ProxySession, get_session, sanitize_credentials, SoaxGatewayError
 
 log = get_engine_logger()
@@ -78,12 +80,45 @@ class SoaxProvider:
         proxy_url = session.proxy_url(scheme)
         return {"http": proxy_url, "https": proxy_url}
 
-    def playwright_proxy(self, session: ProxySession) -> dict:
+    @contextlib.contextmanager
+    def screenshot_proxy(self, session: ProxySession, channel: Any) -> Iterator[ScreenshotProxy]:
         """
-        Screenshots always go over http: Chromium cannot authenticate to a
-        SOCKS5 proxy, and without authentication SOAX carries no targeting
-        rules. Same session id, so the same exit node as the check.
+        Proxy settings for the screenshot browser, for the duration of the shot.
+
+        For an http run, the gateway directly - Chromium authenticates to an
+        HTTP proxy without complaint.
+
+        For a socks5 run, a local shim: Playwright refuses socks5 with
+        credentials, and the gateway refuses to target without them, so the shim
+        takes the credentials and Chromium talks to 127.0.0.1 unauthenticated.
+        Same session id either way, so the same exit node as the check.
+
+        If the shim cannot start, the screenshot falls back to http rather than
+        being lost, and the returned transport says so for the card.
         """
+        if channel is None or channel.transport != "socks5":
+            yield ScreenshotProxy(self._http_proxy_settings(session), "http")
+            return
+
+        try:
+            with local_socks5_shim(
+                upstream_host=session.host,
+                upstream_port=session.port,
+                username=session.username,
+                password=session.password,
+                remote_dns=(channel.resolve == "remote"),
+            ) as port:
+                yield ScreenshotProxy(
+                    {"server": f"socks5://127.0.0.1:{port}"},  # no credentials: that is the point
+                    "socks5",
+                )
+            return
+        except OSError as e:
+            log.warning("Could not start the SOCKS5 shim (%s); screenshot falls back to http", e)
+
+        yield ScreenshotProxy(self._http_proxy_settings(session), "http")
+
+    def _http_proxy_settings(self, session: ProxySession) -> dict:
         return {
             "server": f"http://{session.host}:{session.port}",
             "username": session.username,

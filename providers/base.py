@@ -15,6 +15,8 @@ to compare.
 
 from __future__ import annotations
 
+from contextlib import AbstractContextManager
+from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
 
@@ -36,6 +38,22 @@ class ProviderGatewayError(RuntimeError):
         if detail:
             message += f" ({detail})"
         super().__init__(message)
+
+
+@dataclass
+class ScreenshotProxy:
+    """
+    What the screenshot browser should use, and which transport that turned out
+    to be.
+
+    The two can differ: a SOCKS5 run normally gets a shim and therefore socks5,
+    but if the shim cannot start we fall back to http rather than lose the
+    picture - and then the check's card has to say so, because a screenshot
+    taken over a different transport is not evidence about this one.
+    """
+
+    settings: dict
+    transport: str
 
 
 @runtime_checkable
@@ -70,5 +88,9 @@ class Provider(Protocol):
         different transport than the check itself.
         """
 
-    def playwright_proxy(self, session: Any) -> dict:
-        """Proxy settings for the screenshot browser."""
+    def screenshot_proxy(self, session: Any, channel: Any) -> AbstractContextManager:
+        """
+        Context manager yielding a ScreenshotProxy for the duration of a
+        screenshot. Anything it has to start (a local shim, say) lives only
+        inside the block.
+        """

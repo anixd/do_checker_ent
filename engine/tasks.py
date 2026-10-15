@@ -80,17 +80,6 @@ class Channel:
             return "socks5h" if self.resolve == "remote" else "socks5"
         return self.transport
 
-    @property
-    def screenshot_transport(self) -> str:
-        """
-        Chromium cannot authenticate to a SOCKS5 proxy and SOAX will not carry
-        targeting rules without authentication, so a screenshot goes over HTTP
-        even when the check itself went over SOCKS5. Same session id, therefore
-        the same exit node - but the card has to say so, and does.
-        """
-        return "http"
-
-
 @dataclass
 class CheckTask:
     """
