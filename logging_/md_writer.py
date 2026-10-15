@@ -36,7 +36,8 @@ def render_md_card(
     # named for what they are.
     lines.append(f"Provider: {provider}")
     lines.append(f"Transport: {transport}")
-    lines.append(f"DNS resolve: {dns_resolve}" + (" (on the exit node)" if dns_resolve == "remote" else " (local)"))
+    where = "on the exit node" if dns_resolve == "remote" else "on our side"
+    lines.append(f"DNS resolve: {dns_resolve} ({where})")
     lines.append(f"Network: {network}")
     lines.append(f"Timeout: {timeout_sec}s")
     lines.append(f"URL: {url_show}")
