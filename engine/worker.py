@@ -142,17 +142,14 @@ def _measure_http(url: str, proxies: dict, timeout_sec: int, provider: Provider,
 
 
 def _take_screenshot(
-        ps: ProxySession, url: str, out_path: str, screenshot_timeout_sec: int, width: int, height: int,
-        provider: Provider = None
+        url: str, out_path: str, screenshot_timeout_sec: int, width: int, height: int,
+        playwright_proxy: dict
 ) -> tuple[bool, str | None]:
     if not sync_playwright:
         return False, "playwright not installed or failed to import"
 
     cfg = ConfigStore.get()
     wait_after_load_sec = cfg.screenshots.wait_after_load_sec
-
-    # Over http even when the check used socks5 - see Provider.playwright_proxy.
-    playwright_proxy = (provider or get_provider(None)).playwright_proxy(ps)
 
     try:
         with sync_playwright() as p:
@@ -307,13 +304,17 @@ def execute_check(task: CheckTask, options: RunOptions) -> dict:
         log.info("Acquiring screenshot semaphore...")
         with screenshot_semaphore:
             log.info("Semaphore acquired. Taking screenshot...")
-            # Playwright is given screenshot_timeout; anything past that plus a
-            # margin means it is not going to come back on its own.
-            with _hang_watchdog(screenshot_timeout + 10):
-                ok, s_err = _take_screenshot(
-                    ps, url_full, png_path, screenshot_timeout,
-                    cfg.screenshots.width, cfg.screenshots.height, provider
-                )
+            # The provider decides how the browser reaches the proxy and keeps
+            # whatever it had to start (a shim) alive only for this block.
+            with provider.screenshot_proxy(ps, options.channel) as shot_proxy:
+                # Playwright is given screenshot_timeout; anything past that plus
+                # a margin means it is not going to come back on its own.
+                with _hang_watchdog(screenshot_timeout + 10):
+                    ok, s_err = _take_screenshot(
+                        url_full, png_path, screenshot_timeout,
+                        cfg.screenshots.width, cfg.screenshots.height,
+                        shot_proxy.settings,
+                    )
             log.info("Semaphore released.")
 
         if not ok:
@@ -322,11 +323,11 @@ def execute_check(task: CheckTask, options: RunOptions) -> dict:
                 notes += f" | screenshot: {s_err}"
             else:
                 notes = f"screenshot: {s_err}"
-        elif options.channel.transport != options.channel.screenshot_transport:
-            # The picture came through a different transport than the verdict.
-            # Saying so in the card is the whole point of решение 12.
-            note = (f"screenshot taken over {options.channel.screenshot_transport} "
-                    f"(same session), check ran over {options.channel.transport}")
+        elif shot_proxy.transport != options.channel.transport:
+            # Only when the fallback kicked in: a picture taken over another
+            # transport is not evidence about this one, so the card says so.
+            note = (f"screenshot taken over {shot_proxy.transport} (same session), "
+                    f"check ran over {options.channel.transport}")
             notes = f"{notes} | {note}" if notes else note
 
     geo_str = (task.country or "-").upper()

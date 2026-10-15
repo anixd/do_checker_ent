@@ -177,10 +177,6 @@ class TestChannel(unittest.TestCase):
         self.assertEqual(Channel(transport="socks5", resolve="remote").proxy_scheme, "socks5h")
         self.assertEqual(Channel(transport="socks5", resolve="local").proxy_scheme, "socks5")
 
-    def test_screenshots_always_go_over_http(self):
-        for transport in ("http", "socks5"):
-            self.assertEqual(Channel(transport=transport).screenshot_transport, "http")
-
 
 class TestMakeChannel(unittest.TestCase):
     def test_builds_and_normalises(self):
