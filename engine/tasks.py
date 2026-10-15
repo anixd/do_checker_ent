@@ -18,7 +18,8 @@ from __future__ import annotations
 
 import urllib.parse
 from dataclasses import dataclass, field
-from typing import Any, Iterable
+from datetime import datetime
+from typing import Iterable
 
 # Kept here rather than imported from providers.soax_session so that this module
 # stays dependency-free; the session-id format is asserted in tests.
@@ -72,6 +73,38 @@ class CheckTask:
     @property
     def is_valid(self) -> bool:
         return self.parsing_error is None
+
+
+@dataclass
+class RunOptions:
+    """
+    Everything a run needs that is not per-task.
+
+    `label` distinguishes the two entry points in log paths and in the SSE
+    payload; `subfolder` is filled in by the orchestrator at start time so that
+    every card of a run lands together.
+    """
+
+    run_id: str = ""
+    label: str = "std-check"  # std-check | multi-geo
+    channel: Channel = field(default_factory=Channel)
+    network: str = "res_mob"
+    timeout_sec: int = 60
+    make_screenshot: bool = False
+    debug_mode: bool = False
+    subfolder: str = ""
+
+
+def run_subfolder(label: str, channel: Channel, now: datetime | None = None) -> str:
+    """
+    Names a run's directory under ./logs/<date>/, e.g. '12-08-42_std-check_soax-http'.
+
+    The channel is in the directory name rather than in every filename because a
+    run has exactly one channel; this way the tree says what each run was checked
+    with, and the filenames stay about the site.
+    """
+    now = now or datetime.now()
+    return f"{now:%H-%M-%S}_{label}_{channel.slug}"
 
 
 def normalize_url(raw_url: str) -> str:

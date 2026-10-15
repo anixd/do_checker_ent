@@ -20,6 +20,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Dict
 
+from .base import ProviderGatewayError
+
 # Verified against the gateway on 2026-07-28.
 ALLOWED_NETWORKS = ("res", "mob", "res_mob", "any")
 ALLOWED_ON_ERROR = ("replace", "retry", "fail")
@@ -39,20 +41,20 @@ class SoaxConfigError(ValueError):
     """Raised when the requested rules cannot produce a valid username."""
 
 
-class SoaxGatewayError(RuntimeError):
+class SoaxGatewayError(ProviderGatewayError):
     """
     The gateway itself rejected the request, as opposed to the target site
     answering with an error. Carries the X-SOAX-Error / X-SOAX-Detail pair.
+
+    Subclasses ProviderGatewayError so engine/worker.py can catch a refusal from
+    any provider without naming SOAX.
     """
 
     def __init__(self, code: str, detail: str | None = None, http_status: int | None = None):
-        self.code = code
-        self.detail = detail
-        self.http_status = http_status
-        message = f"SOAX gateway: {code}"
-        if detail:
-            message += f" ({detail})"
-        super().__init__(message)
+        super().__init__(code, detail, http_status)
+        # The engine puts str(exc) straight into the check notes, so the message
+        # has to say whose gateway spoke.
+        self.args = (f"SOAX gateway: {self.args[0]}",)
 
 
 def sanitize_credentials(text: str) -> str:

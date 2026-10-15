@@ -17,6 +17,9 @@ services:
       GUNICORN_TIMEOUT: ${GUNICORN_TIMEOUT:-180}
       GUNICORN_GRACEFUL_TIMEOUT: ${GUNICORN_GRACEFUL_TIMEOUT:-30}
       GUNICORN_RELOAD: ${GUNICORN_RELOAD:-true}
+      # Overridable per run so session scope can be exercised without editing
+      # .env: SOAX_SESSION_SCOPE=geo docker compose up -d --force-recreate
+      SOAX_SESSION_SCOPE: ${SOAX_SESSION_SCOPE:-task}
 
     ports:
       - "${APP_HOST:-127.0.0.1}:${APP_PORT:-8888}:${APP_PORT:-8888}"
