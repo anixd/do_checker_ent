@@ -31,7 +31,7 @@
   <label for="resolve">DNS resolve</label>
   <select name="resolve" id="resolve">
     {% for r in defaults.resolve_modes %}
-    <option value="{{ r }}" {% if r == defaults.resolve %}selected{% endif %}>{{ 'on exit node' if r == 'remote' else 'local (ours)' }}</option>
+    <option value="{{ r }}" {% if r == defaults.resolve %}selected{% endif %}>{{ 'on exit node' if r == 'remote' else 'local' }}</option>
     {% endfor %}
   </select>
 </div>
