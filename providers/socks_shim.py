@@ -186,10 +186,16 @@ class _ShimHandler:
             # refusing upstream. Over SOCKS5 the refusal carries no code or
             # detail of its own, which is why the HTTP preflight stays the
             # source of diagnosis for a run (решение 4).
-            log.warning("Shim upstream refused %s:%s - %s", host, port, e)
+            # Debug, not warning: one page render opens dozens of connections
+            # and the gateway routinely refuses some of them - third-party
+            # trackers and CDNs it will not route. Observed in a successful
+            # screenshot: "0x03: Network unreachable" for r6.uuidksinc.net while
+            # the page itself rendered fine. At warning level every screenshot
+            # would bury the log in noise.
+            log.debug("Shim upstream refused %s:%s - %s", host, port, e)
             _reply(client, REP_CONNECTION_REFUSED)
         except OSError as e:
-            log.warning("Shim upstream connect to %s:%s failed: %s", host, port, e)
+            log.debug("Shim upstream connect to %s:%s failed: %s", host, port, e)
             _reply(client, REP_HOST_UNREACHABLE)
         else:
             upstream.settimeout(None)
