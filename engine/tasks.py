@@ -26,6 +26,18 @@ from typing import Iterable
 from providers.soax_session import make_session_id
 
 FORM_NETWORKS = ("res", "mob", "res_mob")
+ALLOWED_TRANSPORTS = ("http", "socks5")
+ALLOWED_RESOLVE = ("remote", "local")
+
+# requests needs PySocks for socks5:// URLs. Without it every socks5 check comes
+# back as "connect_error: Missing dependencies for SOCKS support", which reads as
+# "the site is unreachable" - on a list of forty mirrors, forty false verdicts
+# from one missing dependency. Checked up front instead, so the run is refused.
+try:  # pragma: no cover - the import either works in this image or it does not
+    import socks  # noqa: F401
+    SOCKS_SUPPORT_AVAILABLE = True
+except ImportError:
+    SOCKS_SUPPORT_AVAILABLE = False
 
 
 @dataclass(frozen=True)
@@ -53,6 +65,31 @@ class Channel:
         """
         return f"{self.provider}-{self.transport}"
 
+    @property
+    def proxy_scheme(self) -> str:
+        """
+        The URL scheme requests needs for this channel.
+
+        socks5h hands the hostname to the proxy so the exit node resolves it;
+        socks5 resolves here and sends an address. For mirror checking the first
+        is usually what you want - a geo-targeted check whose DNS happened in
+        our datacentre is only half a geo-targeted check - which is why `remote`
+        is the default resolve mode.
+        """
+        if self.transport == "socks5":
+            return "socks5h" if self.resolve == "remote" else "socks5"
+        return self.transport
+
+    @property
+    def screenshot_transport(self) -> str:
+        """
+        Chromium cannot authenticate to a SOCKS5 proxy and SOAX will not carry
+        targeting rules without authentication, so a screenshot goes over HTTP
+        even when the check itself went over SOCKS5. Same session id, therefore
+        the same exit node - but the card has to say so, and does.
+        """
+        return "http"
+
 
 @dataclass
 class CheckTask:
@@ -73,6 +110,41 @@ class CheckTask:
     @property
     def is_valid(self) -> bool:
         return self.parsing_error is None
+
+
+def make_channel(provider: str | None, transport: str | None, resolve: str | None) -> Channel:
+    """
+    Validates what the form sent. Raises ValueError with a message meant for the
+    person who submitted the form.
+
+    There is no fallback for the transport here on purpose: the caller passes
+    either the submitted value or the configured default, and if neither exists
+    the run must be refused rather than guessed (решение 11).
+    """
+    chosen_provider = (provider or "soax").strip().lower()
+    chosen_transport = (transport or "").strip().lower()
+    chosen_resolve = (resolve or "remote").strip().lower()
+
+    if not chosen_transport:
+        raise ValueError(
+            "Transport is required: choose HTTP or SOCKS5 "
+            "(no default is configured in app.yaml)"
+        )
+    if chosen_transport not in ALLOWED_TRANSPORTS:
+        raise ValueError(
+            f"Unknown transport {transport!r}; expected one of {'|'.join(ALLOWED_TRANSPORTS)}"
+        )
+    if chosen_resolve not in ALLOWED_RESOLVE:
+        raise ValueError(
+            f"Unknown DNS resolve mode {resolve!r}; expected one of {'|'.join(ALLOWED_RESOLVE)}"
+        )
+    if chosen_transport == "socks5" and not SOCKS_SUPPORT_AVAILABLE:
+        raise ValueError(
+            "SOCKS5 is not available in this build: PySocks is not installed. "
+            "Rebuild the image (docker compose up -d --build) or pick HTTP."
+        )
+
+    return Channel(provider=chosen_provider, transport=chosen_transport, resolve=chosen_resolve)
 
 
 @dataclass

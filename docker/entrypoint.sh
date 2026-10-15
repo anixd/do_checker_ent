@@ -38,8 +38,12 @@ screenshots:
 soax:
   host: proxy.soax.com
   port: 1337
-  # http only. SOCKS5 breaks the Chromium proxy auth used for screenshots.
-  proxy_type: http
+  # Default transport the forms preselect: http | socks5.
+  # Leave it empty (or remove the line) to have no default at all - then the
+  # transport has to be chosen explicitly for every run.
+  # Screenshots always go over http regardless: Chromium cannot authenticate to
+  # a SOCKS5 proxy, and without auth the gateway carries no targeting rules.
+  transport: http
   # task = one SOAX session per checked site (independent samples)
   # geo  = one session per country (a single IP for the whole country)
   session_scope: task

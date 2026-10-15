@@ -15,6 +15,7 @@ import unittest
 
 from engine.tasks import (
     Channel,
+    make_channel,
     assign_session_ids,
     build_all_country_tasks,
     build_multi_geo_tasks,
@@ -169,6 +170,61 @@ class TestChannel(unittest.TestCase):
     def test_slug_names_provider_and_transport_only(self):
         self.assertEqual(Channel().slug, "soax-http")
         self.assertEqual(Channel(transport="socks5", resolve="local").slug, "soax-socks5")
+
+    def test_proxy_scheme_follows_transport_and_resolve(self):
+        # socks5h hands the hostname to the exit node; socks5 resolves here.
+        self.assertEqual(Channel(transport="http").proxy_scheme, "http")
+        self.assertEqual(Channel(transport="socks5", resolve="remote").proxy_scheme, "socks5h")
+        self.assertEqual(Channel(transport="socks5", resolve="local").proxy_scheme, "socks5")
+
+    def test_screenshots_always_go_over_http(self):
+        for transport in ("http", "socks5"):
+            self.assertEqual(Channel(transport=transport).screenshot_transport, "http")
+
+
+class TestMakeChannel(unittest.TestCase):
+    def test_builds_and_normalises(self):
+        channel = make_channel(" SOAX ", "SOCKS5", " Local ")
+        self.assertEqual((channel.provider, channel.transport, channel.resolve),
+                         ("soax", "socks5", "local"))
+
+    def test_transport_is_required(self):
+        # No fallback here on purpose: the caller passes the submitted value or
+        # the configured default, and if neither exists the run is refused.
+        for missing in (None, "", "   "):
+            with self.subTest(value=missing):
+                with self.assertRaises(ValueError) as ctx:
+                    make_channel("soax", missing, "remote")
+                self.assertIn("required", str(ctx.exception))
+
+    def test_unknown_transport_is_refused(self):
+        with self.assertRaises(ValueError) as ctx:
+            make_channel("soax", "socks4", "remote")
+        self.assertIn("Unknown transport", str(ctx.exception))
+
+    def test_unknown_resolve_is_refused(self):
+        with self.assertRaises(ValueError) as ctx:
+            make_channel("soax", "socks5", "nowhere")
+        self.assertIn("resolve", str(ctx.exception))
+
+    def test_resolve_defaults_to_remote(self):
+        self.assertEqual(make_channel("soax", "socks5", None).resolve, "remote")
+
+    def test_socks5_is_refused_when_pysocks_is_missing(self):
+        # Without PySocks every socks5 check returns "connect_error: Missing
+        # dependencies for SOCKS support", which looks like the site being down.
+        # The run is refused up front instead.
+        import engine.tasks as tasks_module
+        original = tasks_module.SOCKS_SUPPORT_AVAILABLE
+        tasks_module.SOCKS_SUPPORT_AVAILABLE = False
+        try:
+            with self.assertRaises(ValueError) as ctx:
+                make_channel("soax", "socks5", "remote")
+            self.assertIn("PySocks", str(ctx.exception))
+            # http is unaffected
+            self.assertEqual(make_channel("soax", "http", "remote").transport, "http")
+        finally:
+            tasks_module.SOCKS_SUPPORT_AVAILABLE = original
 
 
 if __name__ == "__main__":

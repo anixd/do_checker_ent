@@ -62,5 +62,13 @@ class Provider(Protocol):
     def classify(self, exc: Exception | None, http_status: int | None) -> str:
         """Maps an outcome onto the engine's result classes."""
 
-    def proxies_for(self, session: Any, channel: Any) -> dict:
-        """requests-style proxy mapping for this session and channel."""
+    def proxies_for(self, session: Any, channel: Any = None) -> dict:
+        """
+        requests-style proxy mapping for this session and channel.
+
+        channel=None means the control plane (preflight), which may use a
+        different transport than the check itself.
+        """
+
+    def playwright_proxy(self, session: Any) -> dict:
+        """Proxy settings for the screenshot browser."""

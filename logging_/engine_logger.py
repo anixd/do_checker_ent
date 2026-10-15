@@ -134,13 +134,20 @@ def log_config_summary(logger: logging.Logger):
     logger.info("  screenshots: enabled_default=%s max_workers=%s timeout_sec=%s wait_after_load_sec=%s",
                 cfg.screenshots.enabled_default, cfg.screenshots.max_workers,
                 cfg.screenshots.timeout_sec, cfg.screenshots.wait_after_load_sec)
-    logger.info("  soax:        %s:%s proxy_type=%s session_scope=%s",
-                cfg.soax.host, cfg.soax.port, cfg.soax.proxy_type, cfg.soax.session_scope)
+    logger.info("  soax:        %s:%s session_scope=%s",
+                cfg.soax.host, cfg.soax.port, cfg.soax.session_scope)
+    logger.info("  transport:   default=%s (empty means it must be chosen per run)",
+                cfg.soax.transport or "none")
     logger.info("  soax rules:  on_error=%s retries=%s bind_node=%s preflight=%s",
                 cfg.soax.on_error, cfg.soax.on_error_retries, cfg.soax.bind_node, cfg.soax.preflight)
     logger.info("  credentials: package_password=%s package_id=%s",
                 mask_secret(cfg.soax.package_password), mask_secret(cfg.soax.package_id))
     logger.info("  logging:     level=%s", cfg.logging.level.upper())
+
+    # Collected by ConfigStore.init(), which runs before the loggers exist.
+    # This is where a bad transport value surfaces instead of killing startup.
+    for warning in ConfigStore.warnings():
+        logger.warning("Configuration: %s", warning)
 
 
 def setup_loggers(app: Flask):

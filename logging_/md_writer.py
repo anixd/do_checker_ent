@@ -23,14 +23,21 @@ def render_md_card(
     timeout_sec: int, url_show: str, redirects: list, timings: dict,
     http_status: int | None, bytes_count: int | None, result: str,
     screenshot_name: str | None, notes: str | None,
-    debug_info: dict | None = None # <-- ДОБАВЛЕНО
+    debug_info: dict | None = None,
+    transport: str = "http", dns_resolve: str = "remote", provider: str = "soax",
 ) -> str:
     lines = []
     lines.append(f"# {domain}")
     lines.append(f"Started: {started}")
     lines.append(f"Geo: {geo_str}")
     lines.append(f"Proxy: {proxy_str}")
-    lines.append(f"DNS mode: {network}")
+    # "DNS mode" used to be printed here with the network type in it, which was
+    # simply mislabelled; now that a run has a real DNS resolve mode, both are
+    # named for what they are.
+    lines.append(f"Provider: {provider}")
+    lines.append(f"Transport: {transport}")
+    lines.append(f"DNS resolve: {dns_resolve}" + (" (on the exit node)" if dns_resolve == "remote" else " (local)"))
+    lines.append(f"Network: {network}")
     lines.append(f"Timeout: {timeout_sec}s")
     lines.append(f"URL: {url_show}")
     lines.append("")

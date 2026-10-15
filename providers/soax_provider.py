@@ -62,14 +62,33 @@ class SoaxProvider:
             "country": task.country,
             "network": options.network,
             "session_id": task.session_id,
+            "transport": options.channel.transport,
         })
 
-    def proxies_for(self, session: ProxySession, channel: Any) -> dict:
-        # Only http is reachable today: config rejects socks5 because Chromium
-        # cannot authenticate to a SOCKS5 proxy. Transport selection lands here
-        # in Этап 3а.
-        proxy_url = session.proxy_url()
+    def proxies_for(self, session: ProxySession, channel: Any = None) -> dict:
+        """
+        requests-style mapping for the run's transport.
+
+        channel=None means "the control plane", i.e. the preflight: it always
+        goes over http, because that is the only transport on which the gateway
+        can tell us *why* it refused (over SOCKS5 a bad rule and a bad password
+        are the same nameless connection failure).
+        """
+        scheme = channel.proxy_scheme if channel is not None else "http"
+        proxy_url = session.proxy_url(scheme)
         return {"http": proxy_url, "https": proxy_url}
+
+    def playwright_proxy(self, session: ProxySession) -> dict:
+        """
+        Screenshots always go over http: Chromium cannot authenticate to a
+        SOCKS5 proxy, and without authentication SOAX carries no targeting
+        rules. Same session id, so the same exit node as the check.
+        """
+        return {
+            "server": f"http://{session.host}:{session.port}",
+            "username": session.username,
+            "password": session.password,
+        }
 
     def preflight(self, session: ProxySession) -> str | None:
         """

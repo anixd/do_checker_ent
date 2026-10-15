@@ -57,10 +57,17 @@ class SoaxCfg:
 
     Note: package_id (the UUID shown on the dashboard Settings tab) is NOT part
     of the connection string. It is kept here only for a future catalog API.
+
+    `transport` is the default the forms preselect, not a restriction: a run
+    carries its own transport. Empty or unrecognised means there is no default
+    and the user must choose - deliberately a warning rather than a startup
+    failure, because which transport suits the work at hand is the operator's
+    call, not a reason to refuse to run.
     """
     host: str
     port: int
-    proxy_type: str           # http only; SOCKS5 breaks Chromium proxy auth
+    transport: str | None     # http | socks5 | None - None means "no default, ask the user"
+    proxy_type: str | None    # deprecated synonym of transport, kept for old app.yaml
     session_scope: str        # task | geo
     on_error: str             # replace | retry | fail  -> gateway 'onerror-*' rule
     on_error_retries: int     # 1..10, used when on_error == "retry"
@@ -119,7 +126,8 @@ _SECTION_DEFAULTS: Dict[str, Dict[str, Any]] = {
     "soax": {
         "host": "proxy.soax.com",
         "port": 1337,
-        "proxy_type": "http",
+        "transport": None,
+        "proxy_type": None,
         "session_scope": "task",
         "on_error": "retry",
         "on_error_retries": 3,
@@ -140,9 +148,15 @@ _SECTION_DEFAULTS: Dict[str, Dict[str, Any]] = {
 }
 
 
+ALLOWED_TRANSPORTS = ("http", "socks5")
+
+
 class ConfigStore:
     _cfg: RootCfg = None
     _yaml_text: str = ""
+    # Collected during init(), which runs before the loggers exist, and emitted
+    # by logging_/engine_logger.py::log_config_summary once they do.
+    _warnings: List[str] = []
 
     @classmethod
     def init(cls):
@@ -159,8 +173,10 @@ class ConfigStore:
             print(f"       (Make sure ./data/config/app.yaml exists locally)")
             raise
 
+        cls._warnings = []
         cfg = cls._build(data)
         cls._override_from_env(cfg)
+        cls._warnings.extend(cls._normalize_transport(cfg))
         cls._validate(cfg)
 
         cls._cfg = cfg
@@ -215,6 +231,7 @@ class ConfigStore:
 
             "SOAX_HOST": (cfg.soax, "host"),
             "SOAX_PORT": (cfg.soax, "port", int),
+            "SOAX_TRANSPORT": (cfg.soax, "transport"),
             "SOAX_PROXY_TYPE": (cfg.soax, "proxy_type"),
             "SOAX_SESSION_SCOPE": (cfg.soax, "session_scope"),
             "SOAX_ON_ERROR": (cfg.soax, "on_error"),
@@ -239,6 +256,54 @@ class ConfigStore:
                     print(f"Warning: Could not cast env var {env_key}={val} to {cast_func}")
 
     @classmethod
+    def _normalize_transport(cls, cfg: RootCfg) -> List[str]:
+        """
+        Resolves the default transport, and never raises.
+
+        `soax.transport` is the field; `soax.proxy_type` is the name it had
+        before SOCKS5 existed and is still honoured, so an installation whose
+        app.yaml says `proxy_type: http` keeps getting http as its default
+        instead of silently losing it on upgrade.
+
+        Anything unrecognised - including an empty string - leaves no default:
+        cfg.soax.transport becomes None, the forms preselect nothing, and a run
+        has to name its transport. A warning is returned rather than raised,
+        per the decision that this field must not stop the app from starting.
+        """
+        warnings: List[str] = []
+        s = cfg.soax
+
+        raw = s.transport
+        source = "soax.transport"
+        if not (raw or "").strip() and (s.proxy_type or "").strip():
+            raw = s.proxy_type
+            source = "soax.proxy_type (deprecated, rename it to soax.transport)"
+
+        value = (raw or "").strip().lower()
+        if not value:
+            s.transport = None
+            warnings.append(
+                "No default transport configured (soax.transport is empty): the "
+                "transport has to be chosen explicitly for every run."
+            )
+        elif value in ALLOWED_TRANSPORTS:
+            s.transport = value
+            if source.startswith("soax.proxy_type"):
+                warnings.append(f"Default transport taken from {source}.")
+        else:
+            s.transport = None
+            warnings.append(
+                f"Ignoring {source}={raw!r}: expected one of "
+                f"{'|'.join(ALLOWED_TRANSPORTS)}. Running without a default "
+                "transport, so it has to be chosen explicitly for every run."
+            )
+        return warnings
+
+    @classmethod
+    def warnings(cls) -> List[str]:
+        return list(cls._warnings)
+
+    @classmethod
     def _validate(cls, cfg: RootCfg):
         """
         Fail fast on a broken config instead of failing on every single check later.
@@ -247,13 +312,6 @@ class ConfigStore:
         """
         s = cfg.soax
         errors: List[str] = []
-
-        if s.proxy_type != "http":
-            errors.append(
-                f"soax.proxy_type must be 'http', got '{s.proxy_type}'. "
-                "SOCKS5 is not supported: Chromium cannot authenticate to a SOCKS5 "
-                "proxy, so screenshots would silently fail."
-            )
 
         if s.on_error not in ("replace", "retry", "fail"):
             errors.append(
@@ -322,6 +380,7 @@ class ConfigStore:
         try:
             candidate = cls._build(data)
             cls._override_from_env(candidate)
+            new_warnings = cls._normalize_transport(candidate)
             cls._validate(candidate)
         except (TypeError, ValueError) as e:
             return False, str(e)
@@ -334,4 +393,5 @@ class ConfigStore:
 
         cls._yaml_text = text
         cls._cfg = candidate
+        cls._warnings = new_warnings
         return True, None
