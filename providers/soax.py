@@ -1,7 +1,6 @@
 from __future__ import annotations
 import os, json, time
-from dataclasses import dataclass, field
-from typing import Any, Dict, List
+from typing import Dict, List
 from datetime import datetime
 from config.loader import ConfigStore
 from logging_.engine_logger import get_engine_logger
@@ -223,58 +222,3 @@ def refresh_catalog_data():
         CatalogStore.update_catalog_from_api()
     except Exception as e:
         log.error(f"Unhandled exception in refresh_catalog_data thread: {e}", exc_info=True)
-
-
-@dataclass
-class ProxySession:
-    type: str
-    host: str
-    port: int
-    username: str
-    password: str
-    session_id: str | None
-    ext_ip: str | None
-    debug_info: Dict[str, Any] = field(default_factory=dict)
-
-
-def get_session(params: dict[str, Any]) -> ProxySession:
-    cfg = ConfigStore.get().soax
-    login = cfg.port_login
-    if not login:
-        raise ValueError("SOAX_PORT_LOGIN is not set in .env")
-    host = params.get("proxy_host") or cfg.host
-    port_str = params.get("proxy_port")
-    port = int(port_str) if port_str else cfg.port_default_port
-    p_conn = params.get("connection_type", "wifi")
-    p_country = params.get("country")
-    p_isp = params.get("isp") or ""
-    p_region = params.get("region_code") or ""
-    p_city = params.get("city") or ""
-    p_isp = p_isp.replace(" ", "+")
-    password_string = f"{p_conn};{p_country};{p_isp};{p_region};{p_city}"
-    debug_data = {
-        "mode": "Port-mode",
-        "raw_login": f"{login[:4]}...{login[-4:]}" if login and len(login) > 8 else "(login masked)",
-        "raw_password": password_string,
-        "raw_host": host,
-        "raw_port": port,
-        "source_params": {
-            "country": p_country,
-            "region": p_region,
-            "city": p_city,
-            "isp": p_isp,
-            "conn_type": p_conn,
-            "host_override": params.get("proxy_host"),
-            "port_override": params.get("proxy_port"),
-        }
-    }
-    return ProxySession(
-        type=params.get("proxy_type", "http"),
-        host=host,
-        port=port,
-        username=login,
-        password=password_string,
-        session_id=None,
-        ext_ip=None,
-        debug_info=debug_data
-    )

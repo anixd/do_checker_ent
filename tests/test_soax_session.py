@@ -176,8 +176,15 @@ class TestSanitizeCredentials(unittest.TestCase):
         self.assertIsNone(sanitize_credentials(None))
 
     def test_mask_secret(self):
-        self.assertEqual(mask_secret("abcdefghijkl"), "abcd...ijkl")
+        # The default is keep=2, not 4: the package password goes through this
+        # on its way into the startup summary, so it should leak as little as
+        # possible. This expectation assumed keep=4 and had been failing on
+        # master since the helper was written.
+        self.assertEqual(mask_secret("abcdefghijkl"), "ab...kl")
+        self.assertEqual(mask_secret("abcdefghijkl", keep=4), "abcd...ijkl")
+        # Short values are masked whole, however small `keep` is.
         self.assertEqual(mask_secret("short"), "*****")
+        self.assertEqual(mask_secret("abcdefg"), "*******")
         self.assertEqual(mask_secret(None), "(not set)")
 
 

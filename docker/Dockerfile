@@ -46,4 +46,6 @@ COPY . /app
 
 EXPOSE ${APP_PORT:-8888}
 ENTRYPOINT ["/entrypoint.sh"]
-CMD ["gunicorn", "-w", "4", "--bind", "0.0.0.0:${APP_PORT:-8888}", "--access-logfile", "/dev/null", "server:app"]
+# Exec form does not expand ${APP_PORT}: the bind address, worker count and
+# timeouts are resolved inside docker/gunicorn.conf.py instead.
+CMD ["gunicorn", "-c", "docker/gunicorn.conf.py", "server:app"]

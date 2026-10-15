@@ -68,11 +68,16 @@ def sanitize_credentials(text: str) -> str:
     return _CREDS_RE.sub(lambda m: m.group("scheme") + "***@", str(text))
 
 
+# Below this length the edges alone give away too much of the value, so it is
+# masked whole: at keep=2 a five-character secret came out as 'sh...rt'.
+_MASK_MIN_LEN = 8
+
+
 def mask_secret(value: str | None, keep: int = 2) -> str:
-    """Renders a secret as 'ab.......yz' for debug output."""
+    """Renders a secret as 'ab...yz' for debug output."""
     if not value:
         return "(not set)"
-    if len(value) <= keep * 2:
+    if len(value) < _MASK_MIN_LEN or len(value) <= keep * 2:
         return "*" * len(value)
     return f"{value[:keep]}...{value[-keep:]}"
 

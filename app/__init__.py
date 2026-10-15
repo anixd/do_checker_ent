@@ -1,9 +1,8 @@
 from flask import Flask
 from config.loader import ConfigStore
-from logging_.engine_logger import setup_loggers
+from logging_.engine_logger import setup_loggers, get_engine_logger
 from dotenv import load_dotenv
 import os
-import threading
 
 load_dotenv()
 
@@ -11,20 +10,19 @@ def create_app() -> Flask:
     app = Flask(__name__)
     app.config['JSONIFY_PRETTYPRINT_REGULAR'] = False
 
-    app.secret_key = os.environ.get('SECRET_KEY')
-    if not app.secret_key:
-        print("WARNING: SECRET_KEY not set. Flash messages won't work.")
-        app.secret_key = 'dev-secret-key'
-
     ConfigStore.init()
     setup_loggers(app)
+    log = get_engine_logger()
+
+    app.secret_key = os.environ.get('SECRET_KEY')
+    if not app.secret_key:
+        # Was a print(): invisible in the container log, where gunicorn's stdout
+        # is the only thing anyone watches.
+        log.warning("SECRET_KEY not set. Flash messages won't work; using a development key.")
+        app.secret_key = 'dev-secret-key'
 
     from . import version_checker
-    update_thread = threading.Thread(
-        target=version_checker.check_for_updates_thread,
-        daemon=True
-    )
-    update_thread.start()
+    version_checker.start_background_checker()
 
     from .routes import bp as routes_bp
     app.register_blueprint(routes_bp)
@@ -45,10 +43,13 @@ def create_app() -> Flask:
         try:
             theme = ConfigStore.get().app.default_theme
         except Exception:
+            log.warning("Could not read default_theme from config; falling back to 'auto'.",
+                        exc_info=True)
             theme = "auto"  # Fallback
 
         return dict(default_theme=theme,
             update_available=version_checker.get_update_status()
         )
 
+    log.info("Application initialized (pid %s).", os.getpid())
     return app

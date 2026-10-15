@@ -10,6 +10,14 @@ services:
     env_file:
       - .env
 
+    # Declared explicitly so they can be overridden per run from the shell,
+    # e.g. GUNICORN_TIMEOUT=5 docker-compose up -d --force-recreate
+    environment:
+      GUNICORN_WORKERS: ${GUNICORN_WORKERS:-4}
+      GUNICORN_TIMEOUT: ${GUNICORN_TIMEOUT:-180}
+      GUNICORN_GRACEFUL_TIMEOUT: ${GUNICORN_GRACEFUL_TIMEOUT:-30}
+      GUNICORN_RELOAD: ${GUNICORN_RELOAD:-true}
+
     ports:
       - "${APP_HOST:-127.0.0.1}:${APP_PORT:-8888}:${APP_PORT:-8888}"
 
@@ -18,4 +26,4 @@ services:
       - ./logs:/logs
       - .:/app
 
-    command: gunicorn -k gevent -w 4 --bind 0.0.0.0:${APP_PORT:-8888} --reload --access-logfile /dev/null server:app
+    command: gunicorn -c docker/gunicorn.conf.py server:app
