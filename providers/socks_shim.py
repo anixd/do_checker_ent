@@ -100,6 +100,29 @@ def _read_target(sock: socket.socket) -> tuple[str, int]:
     return host, port
 
 
+def resolve_preferring_ipv4(host: str, port: int) -> str:
+    """
+    Resolves a name to an address, IPv4 first.
+
+    Only used for the local resolve mode. PySocks would resolve it too, but it
+    takes whatever getaddrinfo returns first - its own comment reads "We can't
+    really work out what IP is reachable, so just pick the first" - and on a
+    host with IPv6 connectivity that first entry is usually the AAAA record.
+
+    The gateway does not route IPv6: verified 2026-10-16 against an IPv6-only
+    host, which failed both by name and by explicit address, and seen in the
+    wild as "0x03: Network unreachable" while a page was rendering. Handing it
+    an IPv6 address is therefore a guaranteed failure where IPv4 would have
+    worked, so the choice is made here instead of being inherited.
+    """
+    infos = socket.getaddrinfo(host, port, socket.AF_UNSPEC, socket.SOCK_STREAM)
+    for family in (socket.AF_INET, socket.AF_INET6):
+        for info in infos:
+            if info[0] == family:
+                return info[4][0]
+    raise OSError(f"no address for {host}")
+
+
 def _relay(src: socket.socket, dst: socket.socket) -> None:
     try:
         while True:
@@ -164,6 +187,16 @@ class _ShimHandler:
         Opens the authenticated upstream connection, or answers the client with
         the matching SOCKS5 failure code and returns None.
         """
+        if not self.rdns:
+            # Resolve here, IPv4 first, and hand PySocks a literal address: it
+            # passes those through untouched.
+            try:
+                host = resolve_preferring_ipv4(host, port)
+            except OSError as e:
+                log.debug("Shim could not resolve %s locally: %s", host, e)
+                _reply(client, REP_HOST_UNREACHABLE)
+                return None
+
         upstream = socks.socksocket()
         upstream.set_proxy(
             socks.SOCKS5, self.host, self.port,

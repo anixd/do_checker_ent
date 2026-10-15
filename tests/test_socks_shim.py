@@ -23,7 +23,7 @@ import unittest
 import gevent
 from gevent.server import StreamServer
 
-from providers.socks_shim import local_socks5_shim
+from providers.socks_shim import local_socks5_shim, resolve_preferring_ipv4
 
 # The shim logs refusals at warning level, which is the right thing in
 # production and pure noise in a test asserting exactly those refusals.
@@ -246,6 +246,46 @@ class TestRefusals(ShimTestCase):
             code, sock = socks5_connect(port, "localhost", self.target.port)
             self.assertIn(code, (0x01, 0x04))
             sock.close()
+
+
+class TestLocalResolution(unittest.TestCase):
+    """
+    The gateway does not route IPv6 - an IPv6-only host fails both by name and
+    by address - so the local resolve mode must not hand it an AAAA result just
+    because getaddrinfo listed it first, which is what PySocks would do.
+    """
+
+    def test_ipv4_is_preferred_over_ipv6(self):
+        dual_stack = [
+            (socket.AF_INET6, socket.SOCK_STREAM, 6, "", ("2a02:b4a:1:1d::103", 443, 0, 0)),
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("45.80.110.27", 443)),
+        ]
+        original = socket.getaddrinfo
+        socket.getaddrinfo = lambda *a, **kw: dual_stack
+        try:
+            self.assertEqual(resolve_preferring_ipv4("example.test", 443), "45.80.110.27")
+        finally:
+            socket.getaddrinfo = original
+
+    def test_ipv6_is_used_when_there_is_nothing_else(self):
+        only_v6 = [
+            (socket.AF_INET6, socket.SOCK_STREAM, 6, "", ("2a02:b4a:1:1d::103", 443, 0, 0)),
+        ]
+        original = socket.getaddrinfo
+        socket.getaddrinfo = lambda *a, **kw: only_v6
+        try:
+            self.assertEqual(resolve_preferring_ipv4("example.test", 443), "2a02:b4a:1:1d::103")
+        finally:
+            socket.getaddrinfo = original
+
+    def test_unresolvable_name_raises(self):
+        original = socket.getaddrinfo
+        socket.getaddrinfo = lambda *a, **kw: []
+        try:
+            with self.assertRaises(OSError):
+                resolve_preferring_ipv4("nothing.test", 443)
+        finally:
+            socket.getaddrinfo = original
 
 
 class TestLifecycle(ShimTestCase):
