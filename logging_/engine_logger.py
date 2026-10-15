@@ -142,6 +142,7 @@ def log_config_summary(logger: logging.Logger):
                 cfg.soax.on_error, cfg.soax.on_error_retries, cfg.soax.bind_node, cfg.soax.preflight)
     logger.info("  credentials: package_password=%s package_id=%s",
                 mask_secret(cfg.soax.package_password), mask_secret(cfg.soax.package_id))
+    logger.info("  dns:         use_ipv6=%s (SOAX does not route IPv6)", cfg.dns.use_ipv6)
     logger.info("  logging:     level=%s", cfg.logging.level.upper())
 
     # Collected by ConfigStore.init(), which runs before the loggers exist.

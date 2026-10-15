@@ -29,6 +29,7 @@ import gevent
 import socks
 from gevent.server import StreamServer
 
+from engine.dns_policy import ipv6_enabled
 from logging_.engine_logger import get_engine_logger
 
 log = get_engine_logger()
@@ -89,6 +90,13 @@ def _read_target(sock: socket.socket) -> tuple[str, int]:
         host = socket.inet_ntoa(_recv_exact(sock, 4))
     elif address_type == ATYP_IPV6:
         host = socket.inet_ntop(socket.AF_INET6, _recv_exact(sock, 16))
+        if not ipv6_enabled():
+            # The one place a browser's own address choice reaches us. Refusing
+            # here is both faster and more honest than handing an IPv6 literal
+            # to a gateway that does not route IPv6 - its refusal over SOCKS5
+            # carries no reason at all (решение 14).
+            _reply(sock, REP_ATYP_NOT_SUPPORTED)
+            raise ValueError(f"IPv6 target [{host}] refused: IPv6 is off (dns.use_ipv6=false)")
     elif address_type == ATYP_DOMAIN:
         length = _recv_exact(sock, 1)[0]
         host = _recv_exact(sock, length).decode("idna")

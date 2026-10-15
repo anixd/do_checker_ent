@@ -23,6 +23,7 @@ import unittest
 import gevent
 from gevent.server import StreamServer
 
+from engine import dns_policy
 from providers.socks_shim import local_socks5_shim, resolve_preferring_ipv4
 
 # The shim logs refusals at warning level, which is the right thing in
@@ -158,6 +159,8 @@ def socks5_connect(port, target_host, target_port, atyp=0x03, command=0x01):
     if atyp == 0x03:
         encoded = target_host.encode()
         address = bytes([0x03, len(encoded)]) + encoded
+    elif atyp == 0x04:
+        address = bytes([0x04]) + socket.inet_pton(socket.AF_INET6, target_host)
     else:
         address = bytes([0x01]) + socket.inet_aton(target_host)
     sock.sendall(bytes([0x05, command, 0x00]) + address + struct.pack("!H", target_port))
@@ -286,6 +289,43 @@ class TestLocalResolution(unittest.TestCase):
                 resolve_preferring_ipv4("nothing.test", 443)
         finally:
             socket.getaddrinfo = original
+
+
+class TestIpv6Target(ShimTestCase):
+    """
+    The one place a browser's own address choice reaches us: an IPv6 literal in
+    CONNECT. With IPv6 off the shim must refuse it itself - the gateway does not
+    route IPv6, and over SOCKS5 its refusal carries no reason at all, so a local
+    refusal is the only one that says anything.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.addCleanup(dns_policy.apply_ipv6_policy, True)
+
+    def test_ipv6_literal_is_refused_when_ipv6_is_off(self):
+        dns_policy.apply_ipv6_policy(False)
+        with self.shim() as port:
+            code, sock = socks5_connect(port, "::1", self.target.port, atyp=0x04)
+            self.assertEqual(code, 0x08)  # address type not supported
+            sock.close()
+        # Refused before the upstream was involved at all.
+        self.assertIsNone(self.upstream.seen_atyp)
+
+    def test_ipv6_literal_is_forwarded_when_ipv6_is_on(self):
+        """
+        Switching IPv6 back on restores the previous behaviour: the literal goes
+        upstream and the verdict is the gateway's. The upstream here refuses, so
+        the test needs no IPv6 connectivity to prove the literal was forwarded.
+        """
+        dns_policy.apply_ipv6_policy(True)
+        self.upstream.refuse = True
+        with self.shim() as port:
+            code, sock = socks5_connect(port, "::1", self.target.port, atyp=0x04)
+            self.assertEqual(code, 0x05)  # the upstream's refusal, not ours
+            sock.close()
+        self.assertEqual(self.upstream.seen_atyp, 0x04)
+        self.assertEqual(self.upstream.seen_host, "::1")
 
 
 class TestLifecycle(ShimTestCase):
