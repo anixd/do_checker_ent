@@ -3,10 +3,10 @@
 <head>
   <meta charset="utf-8" />
   <title>{{ title | default('DO Checker Ent') }}</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+  <link rel="stylesheet" href="{{ static_v('css/style.css') }}">
   <link rel="shortcut icon" href="{{ url_for('static', filename='img/do.ico') }}">
 
-  <script src="{{ url_for('static', filename='js/theme.js') }}"></script>
+  <script src="{{ static_v('js/theme.js') }}"></script>
 </head>
 <body
 {#  data-regions-url="{{ url_for('routes.api_get_regions') }}"#}
@@ -65,7 +65,7 @@
     {% block content %}{% endblock %}
   </main>
 
-  <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+  <script src="{{ static_v('js/main.js') }}"></script>
 
 </body>
 </html>

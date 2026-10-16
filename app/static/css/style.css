@@ -177,20 +177,29 @@ button, button[type="submit"], button[type="button"] {
     cursor: pointer;
     margin-top: 0;
 }
-button:hover, button[type="submit"]:hover, button[type="button"]:hover {
+button:hover:not(:disabled),
+button[type="submit"]:hover:not(:disabled),
+button[type="button"]:hover:not(:disabled) {
     background: var(--c-btn-primary-hover);
-}
-button[type="submit"]:disabled {
-    background: var(--c-btn-disabled-bg);
-    cursor: not-allowed;
 }
 button.button-secondary {
     background-color: var(--c-btn-secondary-bg);
     color: var(--c-btn-secondary-text);
     margin-left: 16px;
 }
-button.button-secondary:hover {
+button.button-secondary:hover:not(:disabled) {
     background: var(--c-btn-secondary-hover);
+}
+/* Every button, not just the submit one: during a run Clear logs and Reset
+   Form are disabled too, and a red "Clear logs" that ignores clicks reads as a
+   broken page rather than as a locked one. Placed after .button-secondary so
+   it wins on both colour properties. */
+button:disabled,
+button.button-secondary:disabled {
+    background: var(--c-btn-disabled-bg);
+    background-color: var(--c-btn-disabled-bg);
+    opacity: 0.6;
+    cursor: not-allowed;
 }
 
 /* navigation tabs */
@@ -355,6 +364,7 @@ nav.tabs a.active {
 .result-header {
     grid-column: 1 / -1;
     padding-bottom: 8px;
+    margin-bottom: 20px;
     border-bottom: 1px solid var(--c-border-lighter);
     font-size: 14px;
     color: var(--c-text-muted);
