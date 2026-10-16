@@ -6,7 +6,7 @@ from typing import Any, Dict, List
 from config.loader import ConfigStore
 from logging_.context import bind as bind_log_context
 from logging_.engine_logger import get_engine_logger
-from .tasks import CheckTask, RunOptions, assign_session_ids, run_subfolder
+from .tasks import CheckTask, RunOptions, assign_session_ids, run_subfolder, run_totals
 from .worker import execute_check
 
 _engine_logger = get_engine_logger()
@@ -33,18 +33,74 @@ def _sse_emit(run_id: str, payload: dict):
             _engine_logger.warning("SSE queue full for run %s", run_id)
 
 
-def sse_subscribe(run_id: str) -> "queue.Queue[str]":
-    """Вызывается UI (SSE) для подписки на события."""
-    q: "queue.Queue[str]" = queue.Queue(maxsize=100)
+# How long a finished run's queue is kept for a client that never turned up.
+# Swept lazily when the next run starts, so there is no janitor thread.
+_ABANDONED_RUN_TTL_SEC = 15 * 60
+
+
+def sse_open(run_id: str) -> "queue.Queue[str]":
+    """
+    Creates the run's queue. Called by start_run **before** the worker thread,
+    so that nothing emitted can arrive before there is somewhere to put it.
+
+    Unbounded on purpose. The previous queue held 100 messages and dropped the
+    rest with a warning; buffering events until the browser connects is the
+    whole point of this queue, and an ALL-mode run emits a few thousand. It is
+    bounded in practice by the size of one run and freed when the stream ends.
+    """
+    q: "queue.Queue[str]" = queue.Queue()
     with _lock:
         _sse_queues[run_id] = q
     return q
 
 
-def sse_unsubscribe(run_id: str):
-    """Вызывается, когда SSE-поток завершен."""
+def sse_attach(run_id: str) -> "queue.Queue[str] | None":
+    """
+    Hands the run's queue to an SSE client. Returns None when this process does
+    not know the run.
+
+    It used to create a fresh queue and store it under the run id, which
+    silently replaced the one start_run had made - so `run_started`, emitted
+    before any client could connect, went into a queue nobody would ever read
+    (dev/planning.md, дефект 2). Attaching instead of subscribing is the fix,
+    and it is what lets a client that connects late still receive everything.
+
+    None has two causes, and the client cannot tell them apart: a run served by
+    another gunicorn worker (state lives in process memory - the half of дефект
+    2 this does not fix), or a run whose stream has already been read and
+    cleaned up. Either way the caller answers once and closes, rather than
+    holding open a stream that will never carry anything.
+    """
+    with _lock:
+        return _sse_queues.get(run_id)
+
+
+def sse_detach(run_id: str):
+    """Called once the stream has delivered the closing sentinel."""
     with _lock:
         _sse_queues.pop(run_id, None)
+        _runs_state.pop(run_id, None)
+
+
+def _sweep_abandoned_runs():
+    """
+    Drops queues of finished runs nobody ever connected to.
+
+    A client normally cleans up after itself via sse_detach; this covers the
+    browser tab that was closed before the run ended, and the curl that never
+    came. Runs still in flight are never touched - they have no finished_at.
+    """
+    deadline = time.time() - _ABANDONED_RUN_TTL_SEC
+    with _lock:
+        stale = [
+            run_id for run_id, state in _runs_state.items()
+            if state.get("finished_at") and state["finished_at"] < deadline
+        ]
+        for run_id in stale:
+            _sse_queues.pop(run_id, None)
+            _runs_state.pop(run_id, None)
+    if stale:
+        _engine_logger.debug("Swept %s abandoned run(s): %s", len(stale), ", ".join(stale))
 
 
 def get_run_state(run_id: str):
@@ -54,28 +110,46 @@ def get_run_state(run_id: str):
 
 def _sse_settings(tasks: List[CheckTask], options: RunOptions) -> dict:
     """
-    The run_started payload, kept byte-for-byte compatible with what the two
-    old paths sent, so app/static/js/main.js needs no changes in this branch.
+    What the run was asked to do, for the results header.
 
-    That includes the oddity of the standard run not carrying `urls` at all,
-    which is why the results header shows "? URLs". The payload is replaced
-    wholesale in Этап 4, together with the delivery fix - today run_started
-    rarely reaches the client at all (see dev/planning.md, дефект 2).
+    `country` is "MULTI" for a multi-geo run and the single country otherwise;
+    the old payload carried a `urls` mapping for multi-geo only, which is why
+    the header showed "? URLs" for every standard run. The task list is now a
+    field of its own, so the header counts tasks instead of guessing.
     """
-    if options.label == "multi-geo":
-        return {
-            "country": "MULTI",
-            "urls": {str(task.index): task.url for task in tasks},
-        }
-
     countries = [task.country for task in tasks if task.country]
     return {
-        "country": countries[0] if countries else None,
+        "label": options.label,
+        "country": "MULTI" if options.label == "multi-geo" else (countries[0] if countries else None),
         "network": options.network,
+        "transport": options.channel.transport,
+        "resolve": options.channel.resolve,
         "timeout_sec": options.timeout_sec,
         "make_screenshot": options.make_screenshot,
         "debug_mode": options.debug_mode,
     }
+
+
+def _sse_task_list(tasks: List[CheckTask]) -> List[dict]:
+    """
+    The run's rows in submitted order, so the client can draw them all at once
+    and fill each one in place as results arrive.
+
+    `index` is the task's position in the input and the row's identity for the
+    rest of the run: check_started and check_finished carry it, and the client
+    addresses rows by it rather than by url+country. That is what makes the
+    output order the input order (решение 5) instead of the order the pool
+    happened to finish in.
+    """
+    return [
+        {
+            "index": task.index,
+            "url": task.url,
+            "country": task.country,
+            "parsing_error": task.parsing_error,
+        }
+        for task in tasks
+    ]
 
 
 def start_run(tasks: List[CheckTask], options: RunOptions) -> str:
@@ -110,14 +184,18 @@ def start_run(tasks: List[CheckTask], options: RunOptions) -> str:
     with _lock:
         _runs_state[run_id] = state
 
+    _sweep_abandoned_runs()
+
     # Создаем очередь SSE _до_ запуска потока
-    sse_subscribe(run_id)
+    sse_open(run_id)
 
     _sse_emit(run_id, {
         "type": "run_started",
         "run_id": run_id,
         "ts": datetime.now().isoformat(timespec="seconds"),
         "settings": _sse_settings(tasks, options),
+        "totals": run_totals(tasks),
+        "tasks": _sse_task_list(tasks),
     })
 
     _engine_logger.info("[%s] Spawning background thread...", run_id)
@@ -134,6 +212,7 @@ def start_run(tasks: List[CheckTask], options: RunOptions) -> str:
 def _row_for_failed_task(task: CheckTask) -> dict:
     """A row for a line that never reached the provider (bad format, bad geo)."""
     return {
+        "index": task.index,
         "url": task.url,
         "country": task.country,
         "result": "error",
@@ -181,6 +260,7 @@ def _run_async(tasks: List[CheckTask], options: RunOptions):
         _sse_emit(run_id, {
             "type": "check_started",
             "run_id": run_id,
+            "index": task.index,
             "url": task.url,
             "country": task.country,
         })
@@ -201,6 +281,7 @@ def _run_async(tasks: List[CheckTask], options: RunOptions):
             }
 
         row = {
+            "index": task.index,
             "url": task.url,
             "country": task.country,
             "result": res["classification"],
@@ -229,7 +310,9 @@ def _run_async(tasks: List[CheckTask], options: RunOptions):
                 _engine_logger.error("Future failed: %s", e, exc_info=True)
 
     _engine_logger.info("All tasks finished.")
-    state = _runs_state[run_id]
+    with _lock:
+        state = _runs_state[run_id]
+        state["finished_at"] = time.time()
 
     _sse_emit(run_id, {
         "type": "run_finished",
@@ -242,17 +325,16 @@ def _run_async(tasks: List[CheckTask], options: RunOptions):
         "summary": None,
     })
 
-    _engine_logger.info("'run_finished' emitted. Unsubscribing SSE.")
+    _engine_logger.info("'run_finished' emitted. Closing the SSE queue.")
 
-    # Сигналим обработчику SSE, что пора закрываться. The Multi-Geo path used to
-    # skip this, so its stream stayed open until the client gave up.
+    # Сигналим обработчику SSE, что пора закрываться.
     with _lock:
         q = _sse_queues.get(run_id)
     if q:
-        try:
-            q.put(None, block=False)
-        except queue.Full:
-            _engine_logger.warning("SSE queue full while sending the None sentinel for run %s",
-                                   run_id)
+        q.put(None)
 
-    sse_unsubscribe(run_id)
+    # Deliberately no cleanup here: a run can finish before the browser's
+    # EventSource has even connected (300 unparseable rows take milliseconds),
+    # and dropping the queue now would lose the whole run for that client. The
+    # stream removes it once it has delivered the sentinel - see sse_detach -
+    # and _sweep_abandoned_runs covers the client that never arrives.

@@ -1,4 +1,4 @@
-from flask import Flask
+from flask import Flask, url_for
 from config.loader import ConfigStore
 from engine.dns_policy import apply_ipv6_policy
 from logging_.engine_logger import setup_loggers, get_engine_logger
@@ -40,6 +40,28 @@ def create_app() -> Flask:
     # static (for screenshots)
     from .static_server import static_bp
     app.register_blueprint(static_bp)
+
+    @app.context_processor
+    def inject_static_version():
+        """
+        Appends the file's mtime to static URLs, so a browser that cached the
+        previous version of main.js or style.css picks up the new one.
+
+        Not cosmetic: the SSE payload changed shape in this release, and an old
+        cached main.js talking to a new server shows an empty result list and no
+        error - exactly the kind of thing a support person reports as "the
+        update broke the checker". mtime rather than the app version, because a
+        css/js fix between releases has to reach the browser too.
+        """
+        def static_v(filename: str) -> str:
+            url = url_for("static", filename=filename)
+            try:
+                mtime = int(os.path.getmtime(os.path.join(app.static_folder, filename)))
+            except OSError:
+                return url
+            return f"{url}?v={mtime}"
+
+        return dict(static_v=static_v)
 
     @app.context_processor
     def inject_default_theme():
