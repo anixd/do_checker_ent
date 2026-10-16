@@ -56,6 +56,22 @@ soax:
   preflight: true
   # SOAX_PACKAGE_ID and SOAX_PACKAGE_PASSWORD live in .env only:
   # this file is editable through the Settings page and shown in the browser.
+alive_check:
+  # Before each run, fetch a few third-party sites through the gateway. When the
+  # proxy service is down, a run otherwise reports every mirror as unavailable -
+  # a false report that also costs the traffic of producing it.
+  enabled: true
+  # Three unrelated operators, so "two of three failed" means the proxy and not
+  # one site having a bad day. Each answers a few hundred bytes: this runs
+  # before every check and the traffic is paid for. google.com is deliberately
+  # absent - it answers proxy addresses with captchas and 429.
+  targets:
+    - http://example.com
+    - http://detectportal.firefox.com/success.txt
+    - http://cloudflare.com/cdn-cgi/trace
+  # How many of them have to answer for the run to start.
+  required_ok: 2
+  timeout_sec: 10
 dns:
   # false (default) drops AAAA records from every resolve in this process:
   # SOAX does not route IPv6, so an attempt to leave over it is a guaranteed

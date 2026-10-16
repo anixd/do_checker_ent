@@ -12,8 +12,9 @@ shim's cooperative server and its blocking PySocks upstream have to coexist in
 one hub - which is exactly the property worth testing.
 """
 
-from gevent import monkey
-monkey.patch_all()
+# gevent is patched for the whole suite in tests/__init__.py - that has to
+# happen before anything imports requests or gevent.server, and this module is
+# not always the first one imported.
 
 import logging
 import socket

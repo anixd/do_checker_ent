@@ -105,6 +105,56 @@ class TestIpv6Switch(unittest.TestCase):
         self.assertTrue(any("dns.use_ipv6" in w for w in warnings), warnings)
 
 
+class TestAliveCheck(unittest.TestCase):
+    """
+    The fallbacks lean towards keeping the check running: it exists to stop a
+    run against a dead provider, so a typo must not quietly switch that
+    protection off (решение 16).
+    """
+
+    @staticmethod
+    def resolve(section: dict):
+        cfg = ConfigStore._build({"alive_check": section})
+        warnings = ConfigStore._normalize_alive_check(cfg)
+        return cfg.alive_check, warnings
+
+    def test_defaults(self):
+        ac, warnings = self.resolve({})
+        self.assertTrue(ac.enabled)
+        self.assertEqual(len(ac.targets), 3)
+        self.assertEqual((ac.required_ok, ac.timeout_sec), (2, 10))
+        self.assertEqual(warnings, [])
+
+    def test_targets_accept_a_comma_separated_string(self):
+        # That is how the environment variable arrives.
+        ac, warnings = self.resolve({"targets": "http://a.test, http://b.test"})
+        self.assertEqual(ac.targets, ["http://a.test", "http://b.test"])
+        self.assertEqual(warnings, [])
+
+    def test_empty_targets_fall_back_to_the_builtin_list(self):
+        ac, warnings = self.resolve({"targets": []})
+        self.assertEqual(len(ac.targets), 3)
+        self.assertTrue(any("targets is empty" in w for w in warnings), warnings)
+
+    def test_required_ok_cannot_exceed_the_targets(self):
+        # Otherwise no run could ever start.
+        ac, warnings = self.resolve({"targets": ["http://a.test"], "required_ok": 3})
+        self.assertEqual(ac.required_ok, 1)
+        self.assertTrue(any("exceeds the number of targets" in w for w in warnings), warnings)
+
+    def test_required_ok_below_one_is_raised(self):
+        # Zero would make the check pass even when nothing answers.
+        ac, warnings = self.resolve({"required_ok": 0})
+        self.assertEqual(ac.required_ok, 1)
+        self.assertTrue(any("Raised to 1" in w for w in warnings), warnings)
+
+    def test_garbage_values_warn_instead_of_raising(self):
+        ac, warnings = self.resolve({"enabled": "maybe", "required_ok": "two", "timeout_sec": "soon"})
+        self.assertTrue(ac.enabled)
+        self.assertEqual((ac.required_ok, ac.timeout_sec), (2, 10))
+        self.assertEqual(len(warnings), 3, warnings)
+
+
 class TestUnknownSectionsAreIgnored(unittest.TestCase):
     def test_unknown_keys_do_not_break_the_build(self):
         # An app.yaml left over from the port-mode version must not crash the

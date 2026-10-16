@@ -11,6 +11,10 @@ from __future__ import annotations
 
 import contextlib
 import json
+import time
+import uuid
+from dataclasses import replace
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Iterator
 
 import requests
@@ -19,9 +23,15 @@ from config.loader import ConfigStore
 from engine.classify import classify_transport
 from logging_.engine_logger import get_engine_logger
 
-from .base import ProviderGatewayError, ScreenshotProxy
+from .base import AliveProbe, ProviderGatewayError, ScreenshotProxy
 from .socks_shim import local_socks5_shim
-from .soax_session import ProxySession, get_session, sanitize_credentials, SoaxGatewayError
+from .soax_session import (
+    ProxySession,
+    get_session,
+    make_session_id,
+    sanitize_credentials,
+    SoaxGatewayError,
+)
 
 log = get_engine_logger()
 
@@ -180,6 +190,92 @@ class SoaxProvider:
             return f"geo mismatch: requested {session.country}, exit node is in {actual_cc}"
 
         return None
+
+    def check_alive(self, task: Any, options: Any, targets: list[str],
+                    timeout_sec: int, stop_after_ok: int = 0) -> list[AliveProbe]:
+        """
+        Asks the gateway to fetch a few third-party sites, and reports what
+        happened to each.
+
+        Over the run's own channel, not a fixed one: checking http when the run
+        will go over socks5 would miss exactly the failure this is here to
+        catch.
+
+        **One session per target.** Sharing a session makes the probes anything
+        but independent, and "two of three failed" is only meaningful if the
+        three are. Observed 2026-10-17 on a shared session: two unresolvable
+        targets hung for the full timeout and took the third down with them -
+        example.com, which had answered in 744 ms a minute earlier and 314 ms a
+        minute later, timed out at 10 s, giving 0/3 and blocking a run through
+        a perfectly healthy gateway. Sessions cost nothing; a false "the proxy
+        is down" costs the whole run.
+
+        Concurrently, because the expensive case is the one where the provider
+        is down - three sequential timeouts would hold the user's request for
+        three times the timeout before telling them it is not going to work.
+        The pool is tiny and short-lived; under gevent these are greenlets.
+
+        And it returns as soon as stop_after_ok targets have answered. Observed
+        on 2026-10-17: a residential exit in kz fetched two targets in under a
+        second and sat on the third until the 10 s timeout. Waiting for it would
+        have delayed a perfectly good run by ten seconds to learn nothing - the
+        verdict was already decided. Stragglers are left to finish into the void
+        rather than waited on, which is why the pool is shut down without wait.
+        """
+        # Shared prefix, one id per probe: dc<base>00, dc<base>01, ...
+        session_base = uuid.uuid4().hex[:8]
+
+        def probe(numbered: tuple[int, str]) -> AliveProbe:
+            index, target = numbered
+            started = time.time()
+            try:
+                probe_task = replace(task, session_id=make_session_id(session_base, index))
+                session = self.build_session(probe_task, options)
+                proxies = self.proxies_for(session, options.channel)
+                resp = requests.get(
+                    target, proxies=proxies, timeout=timeout_sec, allow_redirects=True,
+                )
+                raise_for_gateway_error(resp)
+                elapsed = int((time.time() - started) * 1000)
+                # Same bar as a successful check: anything the site answers with
+                # proves the gateway carried the request there and back.
+                return AliveProbe(
+                    target=target,
+                    ok=200 <= resp.status_code < 400,
+                    status=resp.status_code,
+                    ms=elapsed,
+                    error=None if 200 <= resp.status_code < 400 else f"HTTP {resp.status_code}",
+                )
+            except Exception as e:
+                # Including SoaxGatewayError: a gateway refusal is the clearest
+                # possible "not alive" there is, and the caller wants a verdict,
+                # not an exception.
+                return AliveProbe(
+                    target=target,
+                    ok=False,
+                    ms=int((time.time() - started) * 1000),
+                    error=sanitize_credentials(str(e)),
+                )
+
+        probes: list[AliveProbe] = []
+        pool = ThreadPoolExecutor(max_workers=len(targets) or 1)
+        try:
+            futures = [pool.submit(probe, pair) for pair in enumerate(targets)]
+            ok_count = 0
+            try:
+                # The margin over timeout_sec is for the probes themselves to
+                # time out first and report why; this is the backstop.
+                for future in as_completed(futures, timeout=timeout_sec + 5):
+                    result = future.result()
+                    probes.append(result)
+                    ok_count += 1 if result.ok else 0
+                    if stop_after_ok and ok_count >= stop_after_ok:
+                        break
+            except TimeoutError:
+                log.warning("Alive-check probes did not finish within %ss", timeout_sec + 5)
+        finally:
+            pool.shutdown(wait=False, cancel_futures=True)
+        return probes
 
     def check_response(self, resp: requests.Response) -> None:
         """
