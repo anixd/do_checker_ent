@@ -359,6 +359,16 @@ nav.tabs a.active {
     font-size: 14px;
     color: var(--c-text-muted);
 }
+/* Totals plaque: shown above and below the results of a run */
+.run-totals {
+    margin: 12px 0 0;
+    padding: 8px 12px;
+    border: 1px solid var(--c-border-light);
+    border-radius: 6px;
+    background-color: var(--c-bg-secondary);
+    color: var(--c-text);
+    font-size: 14px;
+}
 .screenshot-preview { text-align: center; }
 .screenshot-preview img {
     max-width: 100%;

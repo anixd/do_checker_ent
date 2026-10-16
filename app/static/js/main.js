@@ -7,8 +7,59 @@ document.addEventListener("DOMContentLoaded", () => {
     const form = document.getElementById("check-form");
     const resetButton = document.getElementById("reset-form-button");
     const runButton = document.getElementById("run-button");
+    const clearLogsButton = document.getElementById("clear-logs-button");
     const resultsContainer = document.getElementById("results-container");
+    const totalsSlots = ["run-totals-top", "run-totals-bottom"]
+        .map((id) => document.getElementById(id))
+        .filter(Boolean);
+
     let currentEventSource = null;
+    // Per-run bookkeeping for the totals plaque: the counts come with
+    // run_started, the progress is counted here as results arrive.
+    let runState = null;
+
+    // Captured once: this page may say "Run check" or "Run multi-geo check",
+    // and the previous version re-enabled every page with the text "Run checks".
+    const runButtonLabel = runButton ? runButton.textContent : "";
+
+    // During a run all three buttons are locked, not just Run: clearing the log
+    // directory or resetting the form mid-run used to be possible.
+    const setBusy = (busy) => {
+        [runButton, clearLogsButton, resetButton].forEach((button) => {
+            if (button) { button.disabled = busy; }
+        });
+        if (runButton) {
+            runButton.textContent = busy ? "Running..." : runButtonLabel;
+        }
+    };
+
+    const plural = (count, one, many) => `${count} ${count === 1 ? one : many}`;
+
+    const formatDuration = (ms) => {
+        const seconds = Math.max(0, Math.round((ms || 0) / 1000));
+        return `${Math.floor(seconds / 60)} m ${String(seconds % 60).padStart(2, "0")} s`;
+    };
+
+    // "45 checks · 15 domains × 3 countries · 1 m 05 s"
+    const renderTotals = (tail) => {
+        if (!runState) { return; }
+        const totals = runState.totals;
+        const parts = [
+            plural(totals.checks, "check", "checks"),
+            `${plural(totals.domains, "domain", "domains")} × ${plural(totals.countries, "country", "countries")}`,
+        ];
+        if (totals.invalid) {
+            parts.push(`${plural(totals.invalid, "row", "rows")} skipped`);
+        }
+        if (tail) { parts.push(tail); }
+        const text = parts.join(" · ");
+        totalsSlots.forEach((slot) => { slot.textContent = text; slot.hidden = false; });
+    };
+
+    const clearTotals = () => {
+        runState = null;
+        totalsSlots.forEach((slot) => { slot.textContent = ""; slot.hidden = true; });
+    };
 
     if (form && resetButton) {
         form.addEventListener("reset", () => {
@@ -18,6 +69,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 if (resultsContainer) {
                     resultsContainer.innerHTML = '';
                 }
+                clearTotals();
 
                 const urlsTextarea = document.getElementById("urls");
                 if (urlsTextarea) {
@@ -27,22 +79,29 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     }
 
-    const getCardId = (payload) => {
-        const cleanUrl = payload.url.replace(/[^a-zA-Z0-9]/g, "");
-        const geoSuffix = payload.country ? `-${payload.country.toLowerCase()}` : '';
-        return `result-${payload.run_id}-${cleanUrl}${geoSuffix}`;
-    };
+    // The row's identity is the task's position in the input, handed out by
+    // run_started and carried by every later event. Addressing rows by index
+    // (rather than by url+country, as before) is what keeps the output in the
+    // order it was submitted while the pool finishes in whatever order it likes.
+    const rowId = (runId, index) => `result-${runId}-${index}`;
 
-    const renderCard = (payload) => {
+    const renderRow = (payload, phase) => {
         const card = document.createElement("div");
         card.className = "result-card";
-        card.id = getCardId(payload);
-        let icon = "🔄";
+        card.id = rowId(payload.run_id, payload.index);
+
+        let icon = "⏳";
         let statusClass = "";
-        let statusText = payload.type === 'check_started' ? 'Running...' : payload.result;
-        let details = `...`;
+        let statusText = "Pending";
+        let details = "—";
         let screenshotHtml = '<div class="screenshot-preview"></div>';
-        if (payload.type === 'check_finished') {
+
+        if (phase === 'running') {
+            icon = "🔄";
+            statusText = "Running...";
+            details = "...";
+        } else if (phase === 'finished') {
+            statusText = payload.result;
             if (payload.result === 'success') {
                 icon = "✅"; statusClass = "status-success";
                 details = `HTTP ${payload.http_code || 200} | TTFB: ${payload.ttfb_ms || '-'} ms`;
@@ -61,7 +120,10 @@ document.addEventListener("DOMContentLoaded", () => {
             } else {
                  screenshotHtml = '<div class="screenshot-preview muted">(no screenshot)</div>';
             }
+        } else if (payload.parsing_error) {
+            details = payload.parsing_error;
         }
+
         card.innerHTML = `
             <div class="status-icon">${icon}</div>
             <div> 
@@ -74,26 +136,54 @@ document.addEventListener("DOMContentLoaded", () => {
         return card;
      };
 
+    const replaceRow = (payload, phase) => {
+        const existing = document.getElementById(rowId(payload.run_id, payload.index));
+        const card = renderRow(payload, phase);
+        if (existing) {
+            existing.replaceWith(card);
+        } else {
+            // Should not happen now that run_started draws every row, but a row
+            // arriving late is still worth showing.
+            resultsContainer.append(card);
+        }
+    };
+
     const renderHeader = (payload) => {
         const header = document.createElement("div");
         header.className = "result-header";
         const country = payload.settings?.country?.toUpperCase() || 'N/A';
-        const urlCount = payload.settings?.urls ? Object.keys(payload.settings.urls).length : '?';
+        const checks = payload.totals?.checks ?? '?';
         header.innerHTML = `
             <strong>Run: <code>${payload.run_id}</code></strong>
-            (${country}, ${urlCount} URLs)
+            (${country}, ${plural(checks, 'check', 'checks')})
             <span id="run-status-${payload.run_id}">(Running...)</span>`;
         return header;
      };
+
+    const renderRun = (payload) => {
+        runState = { runId: payload.run_id, totals: payload.totals, done: 0 };
+        resultsContainer.innerHTML = "";
+        resultsContainer.append(renderHeader(payload));
+
+        // One insertion for the whole run: an ALL-mode run is hundreds of rows,
+        // and appending them one by one would reflow the page hundreds of times.
+        const fragment = document.createDocumentFragment();
+        (payload.tasks || []).forEach((task) => {
+            fragment.append(renderRow({ run_id: payload.run_id, ...task }, 'pending'));
+        });
+        resultsContainer.append(fragment);
+
+        renderTotals(`0/${payload.totals.checks} done`);
+    };
 
     if (form && runButton) {
       form.addEventListener("submit", async (e) => {
         e.preventDefault();
 
         // Сброс состояния интерфейса
-        runButton.disabled = true;
-        runButton.textContent = "Running...";
+        setBusy(true);
         resultsContainer.innerHTML = "";
+        clearTotals();
         if (currentEventSource) { currentEventSource.close(); }
 
         const formData = new FormData(form);
@@ -110,7 +200,7 @@ document.addEventListener("DOMContentLoaded", () => {
         } catch (err) {
           console.error("Fetch error:", err);
           resultsContainer.innerHTML = `<div class="result-card status-error">Network error submitting run.</div>`;
-          runButton.disabled = false; runButton.textContent = "Run checks"; return;
+          setBusy(false); return;
         }
 
         if (!response.ok) {
@@ -118,7 +208,7 @@ document.addEventListener("DOMContentLoaded", () => {
           try { const errData = await response.json(); errorMsg = errData.error || errorMsg; }
           catch(jsonErr) { errorMsg = await response.text(); }
           resultsContainer.innerHTML = `<div class="result-card status-error">Error: ${errorMsg} (${response.status})</div>`;
-          runButton.disabled = false; runButton.textContent = "Run checks"; return;
+          setBusy(false); return;
         }
 
         const data = await response.json();
@@ -131,43 +221,56 @@ document.addEventListener("DOMContentLoaded", () => {
         currentEventSource.onmessage = (event) => {
             const payload = JSON.parse(event.data);
             if (payload.type === 'run_started') {
-                resultsContainer.prepend(renderHeader(payload));
+                renderRun(payload);
             } else if (payload.type === 'check_started') {
-                resultsContainer.append(renderCard(payload));
+                replaceRow(payload, 'running');
             } else if (payload.type === 'check_finished') {
-                const cardId = getCardId(payload);
-
-            const existingCard = document.getElementById(cardId);
-            if (existingCard) {
-                existingCard.replaceWith(renderCard(payload));
-            } else {
-                resultsContainer.append(renderCard(payload));
-            }
+                replaceRow(payload, 'finished');
+                if (runState) {
+                    runState.done += 1;
+                    renderTotals(`${runState.done}/${runState.totals.checks} done`);
+                }
             } else if (payload.type === 'run_finished') {
                 // Обновляем статус в заголовке результатов
                 const statusEl = document.getElementById(`run-status-${payload.run_id}`);
                 if (statusEl) {
-                    statusEl.textContent = `(Finished in ${payload.totals.time_ms / 1000}s. OK: ${payload.totals.ok}, Err: ${payload.totals.err})`;
+                    statusEl.textContent = `(Finished. OK: ${payload.totals.ok}, Err: ${payload.totals.err})`;
                 }
+                renderTotals(formatDuration(payload.totals.time_ms));
+                if (runState) { runState.finished = true; }
 
-                runButton.disabled = false;
-                runButton.textContent = "Run checks";
+                setBusy(false);
                 if (allStatusMsg) {
                     allStatusMsg.style.display = "none";
                 }
                 currentEventSource.close();
+            } else if (payload.type === 'stream_unavailable') {
+                currentEventSource.close();
+                setBusy(false);
+                if (runState) {
+                    // We already have this run on screen. The server closes the
+                    // stream after the final event and EventSource reconnects on
+                    // its own, so this is that reconnect finding the run gone -
+                    // not a failure, and certainly not a reason to wipe results.
+                    console.debug("SSE stream closed for a run already rendered:", payload.run_id);
+                    return;
+                }
+                // Nothing was ever rendered: the run is executing somewhere this
+                // stream cannot see - another gunicorn worker (see дефект 2).
+                resultsContainer.innerHTML =
+                    `<div class="result-card status-error">Live updates unavailable: ${payload.reason}</div>`;
+                clearTotals();
             }
          };
         currentEventSource.onerror = (err) => {
              console.error("EventSource failed:", err);
-             runButton.disabled = false; runButton.textContent = "Run checks";
+             setBusy(false);
              if (currentEventSource) currentEventSource.close();
          };
       });
     }
 
     // Обработка кнопки "Clear logs"
-    const clearLogsButton = document.getElementById("clear-logs-button");
     // Получаем URL из data-атрибута
     const clearLogsUrl = clearLogsButton?.dataset.clearUrl || '/logs/clear';
 
@@ -180,6 +283,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 if (response.ok) {
                     alert("Logs cleared successfully.");
                     resultsContainer.innerHTML = '<p class="muted mt-2">Logs cleared.</p>';
+                    clearTotals();
                 } else {
                     const errData = await response.json();
                     alert(`Error clearing logs: ${errData.message || 'Unknown error'}`);

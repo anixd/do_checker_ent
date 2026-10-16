@@ -21,6 +21,7 @@ from engine.tasks import (
     build_multi_geo_tasks,
     build_single_country_tasks,
     normalize_url,
+    run_totals,
 )
 
 SESSION_RE = re.compile(r"^[a-z0-9]{1,16}$")
@@ -117,6 +118,49 @@ class TestMultiGeo(unittest.TestCase):
     def test_one_bad_line_does_not_sink_the_good_ones(self):
         tasks = build_multi_geo_tasks("a.com az\nbadline\nb.com tr")
         self.assertEqual([t.is_valid for t in tasks], [True, False, True])
+
+
+class TestRunTotals(unittest.TestCase):
+    """
+    Feeds the totals plaque (решение 6). The subtle part is what an unparseable
+    row counts as: a check (it was submitted and the reader must see it) but not
+    a domain or a country (it was never checked anywhere).
+    """
+
+    def test_single_country(self):
+        tasks = build_single_country_tasks("a.com\nb.com\nc.com", "az")
+        self.assertEqual(
+            run_totals(tasks),
+            {"checks": 3, "domains": 3, "countries": 1, "invalid": 0},
+        )
+
+    def test_all_countries_multiplies(self):
+        tasks = build_all_country_tasks("a.com\nb.com", ["az", "kz", "tr"])
+        self.assertEqual(
+            run_totals(tasks),
+            {"checks": 6, "domains": 2, "countries": 3, "invalid": 0},
+        )
+
+    def test_multi_geo_counts_distinct_domains_and_countries(self):
+        tasks = build_multi_geo_tasks("a.com az\nb.com az\na.com kz")
+        self.assertEqual(
+            run_totals(tasks),
+            {"checks": 3, "domains": 2, "countries": 2, "invalid": 0},
+        )
+
+    def test_unparseable_rows_count_as_checks_only(self):
+        tasks = build_multi_geo_tasks("a.com az\nbadline\nb.com zzz")
+        totals = run_totals(tasks)
+        self.assertEqual(totals["checks"], 3)
+        self.assertEqual(totals["invalid"], 2)
+        self.assertEqual(totals["domains"], 1)
+        self.assertEqual(totals["countries"], 1)
+
+    def test_empty_run(self):
+        self.assertEqual(
+            run_totals([]),
+            {"checks": 0, "domains": 0, "countries": 0, "invalid": 0},
+        )
 
 
 class TestSessionIds(unittest.TestCase):

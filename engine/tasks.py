@@ -197,6 +197,26 @@ def normalize_url(raw_url: str) -> str:
         return url
 
 
+def run_totals(tasks: Iterable[CheckTask]) -> dict:
+    """
+    What the run consists of, for the totals plaque (решение 6).
+
+    Rows that never reached the provider are counted as checks - they are part
+    of what was submitted and the reader has to see they exist - but not as
+    domains or countries: a line that failed to parse was not checked anywhere,
+    and counting `badline` as a domain would overstate the report. They come
+    back separately as `invalid` so the plaque can say how many were skipped.
+    """
+    tasks = list(tasks)
+    checked = [task for task in tasks if task.is_valid]
+    return {
+        "checks": len(tasks),
+        "domains": len({task.url for task in checked if task.url}),
+        "countries": len({task.country for task in checked if task.country}),
+        "invalid": len(tasks) - len(checked),
+    }
+
+
 def _dedup(values: Iterable[str]) -> list[str]:
     """Drops repeats while keeping the submitted order."""
     return list(dict.fromkeys(values))
