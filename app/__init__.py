@@ -1,5 +1,6 @@
 from flask import Flask
 from config.loader import ConfigStore
+from engine.dns_policy import apply_ipv6_policy
 from logging_.engine_logger import setup_loggers, get_engine_logger
 from dotenv import load_dotenv
 import os
@@ -13,6 +14,11 @@ def create_app() -> Flask:
     ConfigStore.init()
     setup_loggers(app)
     log = get_engine_logger()
+
+    # Process-wide, so it has to happen before anything resolves a name: the
+    # version checker below is the first thing that does. After setup_loggers,
+    # because it reports which mode it put the process in.
+    apply_ipv6_policy(ConfigStore.get().dns.use_ipv6)
 
     app.secret_key = os.environ.get('SECRET_KEY')
     if not app.secret_key:

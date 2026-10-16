@@ -71,6 +71,40 @@ class TestTransportDefault(unittest.TestCase):
         self.assertTrue(any("Ignoring" in w for w in warnings), warnings)
 
 
+class TestIpv6Switch(unittest.TestCase):
+    """
+    dns.use_ipv6 must land on a real bool, and an unrecognised value must fall
+    to the safe side: a non-empty string is truthy in Python, so `"maybe"` would
+    otherwise switch IPv6 back on - the opposite of what it says.
+    """
+
+    @staticmethod
+    def resolve_dns(dns: dict):
+        cfg = ConfigStore._build({"dns": dns})
+        warnings = ConfigStore._normalize_use_ipv6(cfg)
+        return cfg.dns.use_ipv6, warnings
+
+    def test_missing_section_means_disabled(self):
+        use_ipv6, warnings = self.resolve_dns({})
+        self.assertFalse(use_ipv6)
+        self.assertEqual(warnings, [])
+
+    def test_explicit_values_are_kept(self):
+        self.assertEqual(self.resolve_dns({"use_ipv6": True})[0], True)
+        self.assertEqual(self.resolve_dns({"use_ipv6": False})[0], False)
+
+    def test_strings_yaml_did_not_turn_into_bools_are_read(self):
+        # A quoted "true" in app.yaml is a string, and so is an empty value.
+        self.assertTrue(self.resolve_dns({"use_ipv6": "yes"})[0])
+        self.assertFalse(self.resolve_dns({"use_ipv6": "off"})[0])
+        self.assertFalse(self.resolve_dns({"use_ipv6": ""})[0])
+
+    def test_garbage_disables_ipv6_and_warns_instead_of_raising(self):
+        use_ipv6, warnings = self.resolve_dns({"use_ipv6": "maybe"})
+        self.assertFalse(use_ipv6)
+        self.assertTrue(any("dns.use_ipv6" in w for w in warnings), warnings)
+
+
 class TestUnknownSectionsAreIgnored(unittest.TestCase):
     def test_unknown_keys_do_not_break_the_build(self):
         # An app.yaml left over from the port-mode version must not crash the

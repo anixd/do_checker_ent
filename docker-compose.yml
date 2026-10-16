@@ -12,14 +12,20 @@ services:
 
     # Declared explicitly so they can be overridden per run from the shell,
     # e.g. GUNICORN_TIMEOUT=5 docker-compose up -d --force-recreate
+    # List syntax, not a mapping, because of DNS_USE_IPV6 at the end: a bare
+    # name is passed through only when it is actually set in the shell, while
+    # `DNS_USE_IPV6: ${DNS_USE_IPV6:-false}` would export an empty-or-false
+    # value on every run and permanently override app.yaml.
     environment:
-      GUNICORN_WORKERS: ${GUNICORN_WORKERS:-4}
-      GUNICORN_TIMEOUT: ${GUNICORN_TIMEOUT:-180}
-      GUNICORN_GRACEFUL_TIMEOUT: ${GUNICORN_GRACEFUL_TIMEOUT:-30}
-      GUNICORN_RELOAD: ${GUNICORN_RELOAD:-true}
+      - GUNICORN_WORKERS=${GUNICORN_WORKERS:-4}
+      - GUNICORN_TIMEOUT=${GUNICORN_TIMEOUT:-180}
+      - GUNICORN_GRACEFUL_TIMEOUT=${GUNICORN_GRACEFUL_TIMEOUT:-30}
+      - GUNICORN_RELOAD=${GUNICORN_RELOAD:-true}
       # Overridable per run so session scope can be exercised without editing
       # .env: SOAX_SESSION_SCOPE=geo docker compose up -d --force-recreate
-      SOAX_SESSION_SCOPE: ${SOAX_SESSION_SCOPE:-task}
+      - SOAX_SESSION_SCOPE=${SOAX_SESSION_SCOPE:-task}
+      # Same trick for IPv6: DNS_USE_IPV6=true docker compose up -d --force-recreate
+      - DNS_USE_IPV6
 
     ports:
       - "${APP_HOST:-127.0.0.1}:${APP_PORT:-8888}:${APP_PORT:-8888}"

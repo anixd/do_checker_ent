@@ -78,6 +78,18 @@ class SoaxCfg:
 
 
 @dataclass
+class DnsCfg:
+    """
+    Whether this process is allowed to use IPv6 at all.
+
+    Off by default: SOAX does not route IPv6 (verified), so an outbound attempt
+    over IPv6 is a guaranteed failure that reads as "the mirror is down".
+    See engine/dns_policy.py for what being off actually does.
+    """
+    use_ipv6: bool
+
+
+@dataclass
 class HttpCfg:
     user_agent: str
     accept: str
@@ -93,6 +105,7 @@ class RootCfg:
     execution: ExecCfg
     screenshots: ShotsCfg
     soax: SoaxCfg
+    dns: DnsCfg
     http_client: HttpCfg
 
 
@@ -136,6 +149,9 @@ _SECTION_DEFAULTS: Dict[str, Dict[str, Any]] = {
         "package_id": None,
         "package_password": None,
     },
+    "dns": {
+        "use_ipv6": False,
+    },
     "http_client": {
         "user_agent": (
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
@@ -177,6 +193,7 @@ class ConfigStore:
         cfg = cls._build(data)
         cls._override_from_env(cfg)
         cls._warnings.extend(cls._normalize_transport(cfg))
+        cls._warnings.extend(cls._normalize_use_ipv6(cfg))
         cls._validate(cfg)
 
         cls._cfg = cfg
@@ -211,6 +228,7 @@ class ConfigStore:
             execution=ExecCfg(**_only_known(ExecCfg, "execution")),
             screenshots=ShotsCfg(**_only_known(ShotsCfg, "screenshots")),
             soax=SoaxCfg(**_only_known(SoaxCfg, "soax")),
+            dns=DnsCfg(**_only_known(DnsCfg, "dns")),
             http_client=HttpCfg(**_only_known(HttpCfg, "http_client")),
         )
 
@@ -240,6 +258,8 @@ class ConfigStore:
             "SOAX_PREFLIGHT": (cfg.soax, "preflight", _as_bool),
             "SOAX_PACKAGE_ID": (cfg.soax, "package_id"),
             "SOAX_PACKAGE_PASSWORD": (cfg.soax, "package_password"),
+
+            "DNS_USE_IPV6": (cfg.dns, "use_ipv6", _as_bool),
 
             "USER_AGENT": (cfg.http_client, "user_agent"),
         }
@@ -296,6 +316,37 @@ class ConfigStore:
                 f"Ignoring {source}={raw!r}: expected one of "
                 f"{'|'.join(ALLOWED_TRANSPORTS)}. Running without a default "
                 "transport, so it has to be chosen explicitly for every run."
+            )
+        return warnings
+
+    @classmethod
+    def _normalize_use_ipv6(cls, cfg: RootCfg) -> List[str]:
+        """
+        Forces dns.use_ipv6 to a real bool, and never raises.
+
+        YAML already turns true/false/yes/no into a bool, so anything left over
+        is a typo. It must not become True by accident: a non-empty string is
+        truthy in Python, so `use_ipv6: "maybe"` would silently switch IPv6 back
+        on - the opposite of what whoever wrote it meant. Unrecognised values
+        fall back to the safe side (off) with a warning, in the same spirit as
+        soax.transport: a bad value here is not a reason to refuse to start.
+        """
+        warnings: List[str] = []
+        raw = cfg.dns.use_ipv6
+
+        if isinstance(raw, bool):
+            return warnings
+
+        value = str(raw).strip().lower()
+        if value in ("1", "true", "yes", "on"):
+            cfg.dns.use_ipv6 = True
+        elif value in ("0", "false", "no", "off", ""):
+            cfg.dns.use_ipv6 = False
+        else:
+            cfg.dns.use_ipv6 = False
+            warnings.append(
+                f"Ignoring dns.use_ipv6={raw!r}: expected a boolean (true|false). "
+                "IPv6 stays disabled."
             )
         return warnings
 
@@ -381,6 +432,7 @@ class ConfigStore:
             candidate = cls._build(data)
             cls._override_from_env(candidate)
             new_warnings = cls._normalize_transport(candidate)
+            new_warnings += cls._normalize_use_ipv6(candidate)
             cls._validate(candidate)
         except (TypeError, ValueError) as e:
             return False, str(e)

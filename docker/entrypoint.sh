@@ -41,8 +41,8 @@ soax:
   # Default transport the forms preselect: http | socks5.
   # Leave it empty (or remove the line) to have no default at all - then the
   # transport has to be chosen explicitly for every run.
-  # Screenshots always go over http regardless: Chromium cannot authenticate to
-  # a SOCKS5 proxy, and without auth the gateway carries no targeting rules.
+  # A socks5 run takes its screenshot through a local SOCKS5 shim, so the
+  # picture comes from the same exit node as the check itself.
   transport: http
   # task = one SOAX session per checked site (independent samples)
   # geo  = one session per country (a single IP for the whole country)
@@ -56,6 +56,12 @@ soax:
   preflight: true
   # SOAX_PACKAGE_ID and SOAX_PACKAGE_PASSWORD live in .env only:
   # this file is editable through the Settings page and shown in the browser.
+dns:
+  # false (default) drops AAAA records from every resolve in this process:
+  # SOAX does not route IPv6, so an attempt to leave over it is a guaranteed
+  # failure that looks like the checked mirror being down.
+  # Override per run with DNS_USE_IPV6=true docker compose up -d --force-recreate
+  use_ipv6: false
 http_client:
   user_agent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
   accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
