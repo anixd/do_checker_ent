@@ -24,7 +24,7 @@ jobs:
           VERSION_NAME=${GITHUB_REF#refs/tags/v}
           echo "$VERSION_NAME" > VERSION
           
-          sed -i "s/image: do-checker:.*/image: do-checker:$VERSION_NAME/" docker-compose.yml
+          sed -i "s/image: do-checker-ent:.*/image: do-checker-ent:$VERSION_NAME/" docker-compose.yml
           
           git add VERSION docker-compose.yml
           git commit -m "Bump version to $VERSION_NAME [skip ci]" || echo "No changes to commit"
