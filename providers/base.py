@@ -3,14 +3,13 @@ The seam a provider has to fit through.
 
 Deliberately narrow. Everything the engine needs from a proxy service is: build
 me a session for this task, tell me where it came out, tell me whether you are
-reachable at all, and tell me whether a failure was yours or the target site's. The rest of a
-check - timings, redirects, screenshots, the Markdown card - is transport work
-and belongs to the engine.
+reachable at all, and tell me whether a failure was yours or the target site's.
+The rest of a check - timings, redirects, screenshots, the Markdown card - is
+transport work and belongs to the engine.
 
 This is not a general abstraction over proxy providers; it is the smallest shape
-that lets fastproxys.net land later without reshaping the engine, written while
-there is still only one implementation. Widening it is cheap once there are two
-to compare.
+that lets a second one land without reshaping the engine. Widening it is cheap
+once there are two implementations to compare.
 """
 
 from __future__ import annotations

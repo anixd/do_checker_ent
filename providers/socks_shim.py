@@ -11,7 +11,9 @@ The shim closes that gap: it listens on loopback with no authentication at all,
 and every connection it accepts is forwarded through the real proxy with the
 credentials attached. The browser is pointed at 127.0.0.1 and never sees them;
 they never reach a command line or a file either, which is the reason this is
-~200 lines of our own rather than a gost or 3proxy process (решение 13).
+~200 lines of our own rather than a gost or 3proxy process: those take the
+password in argv, where `ps` inside the container shows it, or in a config file
+on disk.
 
 Scope is deliberately the narrow subset a browser needs: no authentication
 methods, CONNECT only, IPv4/IPv6/domain targets. BIND and UDP ASSOCIATE are
@@ -94,7 +96,7 @@ def _read_target(sock: socket.socket) -> tuple[str, int]:
             # The one place a browser's own address choice reaches us. Refusing
             # here is both faster and more honest than handing an IPv6 literal
             # to a gateway that does not route IPv6 - its refusal over SOCKS5
-            # carries no reason at all (решение 14).
+            # carries no reason at all.
             _reply(sock, REP_ATYP_NOT_SUPPORTED)
             raise ValueError(f"IPv6 target [{host}] refused: IPv6 is off (dns.use_ipv6=false)")
     elif address_type == ATYP_DOMAIN:
@@ -117,11 +119,10 @@ def resolve_preferring_ipv4(host: str, port: int) -> str:
     really work out what IP is reachable, so just pick the first" - and on a
     host with IPv6 connectivity that first entry is usually the AAAA record.
 
-    The gateway does not route IPv6: verified 2026-10-16 against an IPv6-only
-    host, which failed both by name and by explicit address, and seen in the
-    wild as "0x03: Network unreachable" while a page was rendering. Handing it
-    an IPv6 address is therefore a guaranteed failure where IPv4 would have
-    worked, so the choice is made here instead of being inherited.
+    The gateway does not route IPv6 - an IPv6-only host is unreachable through
+    it by name and by address alike. Handing it an IPv6 address is therefore a
+    guaranteed failure where IPv4 would have worked, so the choice is made here
+    instead of being inherited.
     """
     infos = socket.getaddrinfo(host, port, socket.AF_UNSPEC, socket.SOCK_STREAM)
     for family in (socket.AF_INET, socket.AF_INET6):
@@ -223,16 +224,13 @@ class _ShimHandler:
         except socks.ProxyError as e:
             # Where a gateway refusal lands. PySocks wraps it as
             # GeneralProxyError("Socket error: 0x05: Connection refused") rather
-            # than SOCKS5Error, so catch the base class - verified against a
-            # refusing upstream. Over SOCKS5 the refusal carries no code or
-            # detail of its own, which is why the HTTP preflight stays the
-            # source of diagnosis for a run (решение 4).
+            # than SOCKS5Error, so the base class is the one to catch. Over
+            # SOCKS5 the refusal carries no code or detail of its own, which is
+            # why the HTTP preflight remains the source of diagnosis for a run.
             # Debug, not warning: one page render opens dozens of connections
-            # and the gateway routinely refuses some of them - third-party
-            # trackers and CDNs it will not route. Observed in a successful
-            # screenshot: "0x03: Network unreachable" for r6.uuidksinc.net while
-            # the page itself rendered fine. At warning level every screenshot
-            # would bury the log in noise.
+            # and the gateway refuses some of them outright - third-party hosts
+            # it will not route - while the page itself renders fine. At
+            # warning level every screenshot would bury the log in noise.
             log.debug("Shim upstream refused %s:%s - %s", host, port, e)
             _reply(client, REP_CONNECTION_REFUSED)
         except OSError as e:

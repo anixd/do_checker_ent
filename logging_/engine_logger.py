@@ -46,8 +46,8 @@ def logging_dict(log_dir: str, level: str = "INFO") -> dict:
     same file, in the same format.
 
     dictConfig replaces handlers on the named loggers instead of appending, so
-    running it a second time is harmless - the previous version added a
-    FileHandler on every call and duplicated every line per gunicorn worker.
+    running it a second time is harmless - appending instead would add a
+    FileHandler per call and duplicate every line per gunicorn worker.
     """
     os.makedirs(log_dir, exist_ok=True)
     main_handlers = ["stdout", "engine_file"]

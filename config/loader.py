@@ -106,8 +106,8 @@ class DnsCfg:
     """
     Whether this process is allowed to use IPv6 at all.
 
-    Off by default: SOAX does not route IPv6 (verified), so an outbound attempt
-    over IPv6 is a guaranteed failure that reads as "the mirror is down".
+    Off by default: SOAX does not route IPv6, so an outbound attempt over IPv6
+    is a guaranteed failure that reads as "the mirror is down".
     See engine/dns_policy.py for what being off actually does.
     """
     use_ipv6: bool
@@ -176,16 +176,14 @@ _SECTION_DEFAULTS: Dict[str, Dict[str, Any]] = {
     },
     "alive_check": {
         "enabled": True,
-        # Three destinations run by three unrelated operators (IANA, Mozilla,
-        # Cloudflare), each answering a few hundred bytes at most. Measured
-        # through the gateway from az on 2026-10-17: 350-580 ms each.
-        # google.com is deliberately absent - it answers proxy addresses with
-        # captchas and 429, which would read as "the proxy is down" on a
-        # perfectly healthy gateway. www.ripe.net was in the first draft and is
-        # out for cost: it answers 138 KB per probe, which is paid proxy
-        # traffic spent on asking a question, and its latency ranged from 1.3 s
-        # to 9.6 s - against a 10 s timeout that is a false "dead" waiting to
-        # happen.
+        # Three destinations run by three unrelated operators, each answering
+        # a few hundred bytes. Both properties matter: a shared operator would
+        # make "two of three failed" one failure rather than two, and this runs
+        # before every check, on traffic that is paid for.
+        # Unsuitable, and tested as such: google.com answers proxy addresses
+        # with captchas and 429, which reads as "the proxy is down" on a
+        # healthy gateway; www.ripe.net sends 138 KB per probe and its latency
+        # reaches the timeout.
         "targets": [
             "http://example.com",
             "http://detectportal.firefox.com/success.txt",
@@ -226,7 +224,7 @@ class _FirstWinsLoader(yaml.SafeLoader):
     First wins, because the accidental line is almost always the one added
     below - pasted in by hand, copied from another config - so keeping the
     first preserves what the author meant, while PyYAML's own rule applies
-    precisely the line that was the mistake (решение 16).
+    precisely the line that was the mistake.
 
     Duplicates are collected rather than raised: the whole point is that a
     config problem must not stop the application from starting.
@@ -278,9 +276,8 @@ class ConfigStore:
         The Settings page edits a file, so it has to show that file - not the
         copy this worker parsed at startup. With four workers the in-memory copy
         is a trap: save through one of them, open the page again, land on
-        another, see the old text and save it back over your own change
-        (решение 18). Falls back to the parsed copy only if the file cannot be
-        read at all.
+        another, see the old text and save it back over your own change. Falls
+        back to the parsed copy only if the file cannot be read at all.
         """
         try:
             with open(cls.config_path(), "r", encoding="utf-8") as f:
@@ -293,8 +290,8 @@ class ConfigStore:
         """
         Reads and parses the config file. Returns (text, data, warnings) and
         never raises: an unreadable file means defaults plus a warning, because
-        a container that will not start is the worst possible answer to a typo
-        (решение 16).
+        a container that will not start is the worst possible answer to a typo -
+        there is then no interface and no log to find out what went wrong with.
         """
         warnings: List[str] = []
         name = os.path.basename(path)
@@ -355,8 +352,8 @@ class ConfigStore:
 
         # Creating these must not be able to stop the start either: a config
         # pointing at a path we cannot write is a problem to report, not a
-        # reason to refuse to boot (решение 16). The logging setup that follows
-        # will complain in its own terms if the log directory is unusable.
+        # reason to refuse to boot. The logging setup that follows will
+        # complain in its own terms if the log directory is unusable.
         for label, path in (("paths.data_dir", cfg.paths.data_dir),
                             ("paths.logs_dir", cfg.paths.logs_dir)):
             try:
@@ -523,7 +520,7 @@ class ConfigStore:
     def _normalize_alive_check(cls, cfg: RootCfg) -> List[str]:
         """
         Makes the alive-check section usable whatever is in the file, and never
-        raises (решение 16).
+        raises.
 
         The fallbacks lean towards keeping the check running: it exists to stop
         a run against a dead provider, so a typo in `required_ok` must not
@@ -606,7 +603,7 @@ class ConfigStore:
     def _normalize_rules(cls, cfg: RootCfg) -> List[str]:
         """
         Replaces unusable values with the defaults and says so, instead of
-        refusing to start (решение 16).
+        refusing to start.
 
         The combination rules mirror the gateway's own validation, which answers
         400 ERR_INVALID_COMBINATION for the same cases - the difference is that
@@ -737,19 +734,18 @@ class ConfigStore:
         Checks the text, writes it, and deliberately leaves the running config
         alone. Returns (ok, error_message, warnings).
 
-        **The live config is not replaced** (решение 18). It used to be, but only
-        in the worker that handled the POST - so after a save one worker out of
-        four ran the new settings and three the old, and which one answered a
-        request was luck. One rule instead: the file on disk is the next
-        startup's configuration, and nothing changes until the container is
-        restarted.
+        **The live config is not replaced.** Replacing it would only affect the
+        worker that handled the POST, leaving the other workers on the previous
+        settings, so which one answered a request would decide how a run
+        behaved. One rule instead: the file on disk is the next startup's
+        configuration, and nothing changes until the container is restarted.
 
         Validation stays strict here, unlike at startup. Startup has to cope
         with whatever is already on disk; this is someone typing into a form,
-        and the kind thing is to refuse the text and keep the old file. The
-        strictness is also what closes дефект 1: `:::not yaml:::` parses into a
-        one-key mapping, every section then fills in from defaults, and the
-        result used to be written over a working config.
+        and the kind thing is to refuse the text and keep the old file. It also
+        guards against a subtle way of losing a configuration: `:::not yaml:::`
+        parses into a one-key mapping, every section then fills in from
+        defaults, and the result would be written over a working config.
         """
         app_yaml = cls.config_path()
 

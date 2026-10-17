@@ -1,10 +1,10 @@
 """
 SOAX behind the provider seam (providers/base.py).
 
-Everything SOAX-specific that the engine used to do inline lives here: the
-connection string, the preflight against SOAX's own IP lookup, and the fact that
-a gateway refusal is `proxy_error` rather than a property of the checked site.
-engine/worker.py now goes through providers/registry.py and names no provider.
+Everything SOAX-specific lives here: the connection string, the preflight
+against SOAX's own IP lookup, and the fact that a gateway refusal is
+`proxy_error` rather than a property of the checked site. engine/worker.py goes
+through providers/registry.py and names no provider.
 """
 
 from __future__ import annotations
@@ -203,11 +203,9 @@ class SoaxProvider:
 
         **One session per target.** Sharing a session makes the probes anything
         but independent, and "two of three failed" is only meaningful if the
-        three are. Observed 2026-10-17 on a shared session: two unresolvable
-        targets hung for the full timeout and took the third down with them -
-        example.com, which had answered in 744 ms a minute earlier and 314 ms a
-        minute later, timed out at 10 s, giving 0/3 and blocking a run through
-        a perfectly healthy gateway. Sessions cost nothing; a false "the proxy
+        three are: on a shared session two unreachable targets can hang for the
+        full timeout and take a third one down with them, turning a healthy
+        gateway into a blocked run. Sessions cost nothing; a false "the proxy
         is down" costs the whole run.
 
         Concurrently, because the expensive case is the one where the provider
@@ -215,12 +213,12 @@ class SoaxProvider:
         three times the timeout before telling them it is not going to work.
         The pool is tiny and short-lived; under gevent these are greenlets.
 
-        And it returns as soon as stop_after_ok targets have answered. Observed
-        on 2026-10-17: a residential exit in kz fetched two targets in under a
-        second and sat on the third until the 10 s timeout. Waiting for it would
-        have delayed a perfectly good run by ten seconds to learn nothing - the
-        verdict was already decided. Stragglers are left to finish into the void
-        rather than waited on, which is why the pool is shut down without wait.
+        And it returns as soon as stop_after_ok targets have answered. A
+        residential exit node can serve two targets in under a second and sit
+        on the third until the timeout; waiting for it would delay a good run
+        to learn nothing, the verdict being already decided. Stragglers are
+        left to finish into the void rather than waited on, which is why the
+        pool is shut down without wait.
         """
         # Shared prefix, one id per probe: dc<base>00, dc<base>01, ...
         session_base = uuid.uuid4().hex[:8]

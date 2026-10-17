@@ -35,9 +35,9 @@ def _channel_from_form(form):
     for the submitter if it cannot.
 
     The transport falls back to the configured default and, if there is none,
-    the run is refused rather than guessed (решение 11). The provider is
-    resolved here so that an unknown or not-yet-implemented one fails on the
-    request instead of inside a worker thread.
+    the run is refused rather than guessed. The provider is resolved here so
+    that an unknown or not-yet-implemented one fails on the request instead of
+    inside a worker thread.
     """
     configured_default = ConfigStore.get().soax.transport
     channel = make_channel(
@@ -214,8 +214,8 @@ def catalog_update_list():
 
 @bp.get("/settings")
 def settings():
-    # From disk, not from this worker's memory: the page edits a file, and with
-    # four workers the in-memory copy can be older than the file (решение 18).
+    # From disk, not from this worker's memory: the page edits a file, and any
+    # worker's parsed copy can be older than what is on disk.
     return render_template(
         "settings.html",
         active_page="settings",

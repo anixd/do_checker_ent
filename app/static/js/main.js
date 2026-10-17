@@ -19,11 +19,11 @@ document.addEventListener("DOMContentLoaded", () => {
     let runState = null;
 
     // Captured once: this page may say "Run check" or "Run multi-geo check",
-    // and the previous version re-enabled every page with the text "Run checks".
+    // so the label cannot be hardcoded when the button is enabled again.
     const runButtonLabel = runButton ? runButton.textContent : "";
 
     // During a run all three buttons are locked, not just Run: clearing the log
-    // directory or resetting the form mid-run used to be possible.
+    // directory or resetting the form mid-run must not be possible.
     const setBusy = (busy) => {
         [runButton, clearLogsButton, resetButton].forEach((button) => {
             if (button) { button.disabled = busy; }
@@ -256,7 +256,7 @@ document.addEventListener("DOMContentLoaded", () => {
                     return;
                 }
                 // Nothing was ever rendered: the run is executing somewhere this
-                // stream cannot see - another gunicorn worker (see дефект 2).
+                // stream cannot see, i.e. another gunicorn worker.
                 resultsContainer.innerHTML =
                     `<div class="result-message status-error">Live updates unavailable: ${payload.reason}</div>`;
                 clearTotals();
