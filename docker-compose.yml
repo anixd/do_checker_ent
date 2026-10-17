@@ -32,6 +32,10 @@ services:
       - ALIVE_CHECK_TARGETS
       - ALIVE_CHECK_REQUIRED_OK
       - ALIVE_CHECK_TIMEOUT_SEC
+      # Normally comes from .env. Listed so a test run can blank it out and see
+      # what the app does with no package password:
+      # SOAX_PACKAGE_PASSWORD= docker compose up -d --force-recreate
+      - SOAX_PACKAGE_PASSWORD
 
     ports:
       - "${APP_HOST:-127.0.0.1}:${APP_PORT:-8888}:${APP_PORT:-8888}"

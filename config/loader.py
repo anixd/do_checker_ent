@@ -211,6 +211,48 @@ _SECTION_DEFAULTS: Dict[str, Dict[str, Any]] = {
 
 ALLOWED_TRANSPORTS = ("http", "socks5")
 
+KNOWN_SECTIONS = tuple(_SECTION_DEFAULTS)
+
+
+class _FirstWinsLoader(yaml.SafeLoader):
+    """
+    A SafeLoader that reports duplicate keys and keeps the first of them.
+
+    PyYAML treats a duplicate key as perfectly fine and silently keeps the
+    *last* one; a duplicated section is worse still, because the whole first
+    block disappears and its keys fall back to defaults with nothing said. That
+    is how an installation ends up running settings nobody wrote.
+
+    First wins, because the accidental line is almost always the one added
+    below - pasted in by hand, copied from another config - so keeping the
+    first preserves what the author meant, while PyYAML's own rule applies
+    precisely the line that was the mistake (решение 16).
+
+    Duplicates are collected rather than raised: the whole point is that a
+    config problem must not stop the application from starting.
+    """
+
+    def __init__(self, stream):
+        super().__init__(stream)
+        self.duplicate_warnings: List[str] = []
+
+    def construct_mapping(self, node, deep=False):
+        self.flatten_mapping(node)
+        mapping = {}
+        first_seen: Dict[Any, int] = {}
+        for key_node, value_node in node.value:
+            key = self.construct_object(key_node, deep=deep)
+            line = key_node.start_mark.line + 1
+            if key in first_seen:
+                self.duplicate_warnings.append(
+                    f"{line}: duplicate key {key!r} (first set on line "
+                    f"{first_seen[key]}); keeping the value from line {first_seen[key]}"
+                )
+                continue
+            first_seen[key] = line
+            mapping[key] = self.construct_object(value_node, deep=deep)
+        return mapping
+
 
 class ConfigStore:
     _cfg: RootCfg = None
@@ -218,34 +260,109 @@ class ConfigStore:
     # Collected during init(), which runs before the loggers exist, and emitted
     # by logging_/engine_logger.py::log_config_summary once they do.
     _warnings: List[str] = []
+    # Problems that leave the app running but make a check pointless. Checked by
+    # the run routes, which refuse with an explanation rather than producing one
+    # failed check per mirror.
+    _blocking: List[str] = []
+
+    @classmethod
+    def config_path(cls) -> str:
+        data_dir = os.environ.get("DATA_DIR", "/data")
+        return os.path.join(data_dir, "config", "app.yaml")
+
+    @classmethod
+    def file_text(cls) -> str:
+        """
+        The YAML as it is on disk right now.
+
+        The Settings page edits a file, so it has to show that file - not the
+        copy this worker parsed at startup. With four workers the in-memory copy
+        is a trap: save through one of them, open the page again, land on
+        another, see the old text and save it back over your own change
+        (решение 18). Falls back to the parsed copy only if the file cannot be
+        read at all.
+        """
+        try:
+            with open(cls.config_path(), "r", encoding="utf-8") as f:
+                return f.read()
+        except OSError:
+            return cls._yaml_text
+
+    @classmethod
+    def _load_file(cls, path: str) -> tuple[str, Any, List[str]]:
+        """
+        Reads and parses the config file. Returns (text, data, warnings) and
+        never raises: an unreadable file means defaults plus a warning, because
+        a container that will not start is the worst possible answer to a typo
+        (решение 16).
+        """
+        warnings: List[str] = []
+        name = os.path.basename(path)
+
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                text = f.read()
+        except FileNotFoundError:
+            return "", None, [
+                f"Config file not found at {path}; running with built-in defaults. "
+                "In Docker this file is created by docker/entrypoint.sh on first start."
+            ]
+        except OSError as e:
+            return "", None, [f"Could not read {path} ({e}); running with built-in defaults."]
+
+        loader = _FirstWinsLoader(text)
+        try:
+            data = loader.get_single_data()
+            warnings.extend(f"{name}:{w}" for w in loader.duplicate_warnings)
+        except yaml.YAMLError as e:
+            where = ""
+            mark = getattr(e, "problem_mark", None)
+            if mark is not None:
+                where = f" at line {mark.line + 1}, column {mark.column + 1}"
+            problem = getattr(e, "problem", None) or str(e).splitlines()[0]
+            return text, None, [
+                f"{name} could not be parsed{where} ({problem}); "
+                "falling back to built-in defaults for every setting."
+            ]
+        finally:
+            loader.dispose()
+
+        if data is not None and not isinstance(data, dict):
+            return text, None, warnings + [
+                f"{name} does not contain a mapping of sections; "
+                "falling back to built-in defaults for every setting."
+            ]
+
+        return text, data, warnings
 
     @classmethod
     def init(cls):
-        data_dir = os.environ.get("DATA_DIR", "/data")
-        app_yaml = os.path.join(data_dir, "config", "app.yaml")
+        app_yaml = cls.config_path()
 
-        try:
-            with open(app_yaml, "r", encoding="utf-8") as f:
-                text = f.read()
-                cls._yaml_text = text
-                data = yaml.safe_load(text)
-        except FileNotFoundError:
-            print(f"FATAL: Config file not found at {app_yaml}")
-            print(f"       (Make sure ./data/config/app.yaml exists locally)")
-            raise
+        text, data, warnings = cls._load_file(app_yaml)
+        cls._yaml_text = text
 
-        cls._warnings = []
+        cls._warnings = list(warnings)
         cfg = cls._build(data)
         cls._override_from_env(cfg)
         cls._warnings.extend(cls._normalize_transport(cfg))
         cls._warnings.extend(cls._normalize_use_ipv6(cfg))
         cls._warnings.extend(cls._normalize_alive_check(cfg))
-        cls._validate(cfg)
+        cls._warnings.extend(cls._normalize_rules(cfg))
+        cls._blocking = cls._blocking_errors(cfg)
 
         cls._cfg = cfg
 
-        os.makedirs(cls._cfg.paths.data_dir, exist_ok=True)
-        os.makedirs(cls._cfg.paths.logs_dir, exist_ok=True)
+        # Creating these must not be able to stop the start either: a config
+        # pointing at a path we cannot write is a problem to report, not a
+        # reason to refuse to boot (решение 16). The logging setup that follows
+        # will complain in its own terms if the log directory is unusable.
+        for label, path in (("paths.data_dir", cfg.paths.data_dir),
+                            ("paths.logs_dir", cfg.paths.logs_dir)):
+            try:
+                os.makedirs(path, exist_ok=True)
+            except OSError as e:
+                cls._warnings.append(f"Could not create {label}={path!r}: {e}")
 
     @classmethod
     def _build(cls, data: Dict[str, Any] | None) -> RootCfg:
@@ -486,51 +603,123 @@ class ConfigStore:
         return list(cls._warnings)
 
     @classmethod
-    def _validate(cls, cfg: RootCfg):
+    def _normalize_rules(cls, cfg: RootCfg) -> List[str]:
         """
-        Fail fast on a broken config instead of failing on every single check later.
+        Replaces unusable values with the defaults and says so, instead of
+        refusing to start (решение 16).
+
         The combination rules mirror the gateway's own validation, which answers
-        400 ERR_INVALID_COMBINATION for the same cases.
+        400 ERR_INVALID_COMBINATION for the same cases - the difference is that
+        now a wrong value costs a warning and a default, not a container in a
+        restart loop with nobody able to read why.
         """
+        warnings: List[str] = []
         s = cfg.soax
-        errors: List[str] = []
+        soax_defaults = _SECTION_DEFAULTS["soax"]
 
         if s.on_error not in ("replace", "retry", "fail"):
-            errors.append(
-                f"soax.on_error must be one of replace|retry|fail, got '{s.on_error}'"
+            warnings.append(
+                f"Ignoring soax.on_error={s.on_error!r}: expected replace|retry|fail. "
+                f"Using {soax_defaults['on_error']!r}."
             )
+            s.on_error = soax_defaults["on_error"]
 
-        if s.on_error == "retry" and not (1 <= s.on_error_retries <= 10):
-            errors.append(
-                f"soax.on_error_retries must be between 1 and 10, got {s.on_error_retries}"
+        try:
+            retries = int(s.on_error_retries)
+        except (TypeError, ValueError):
+            retries = soax_defaults["on_error_retries"]
+            warnings.append(
+                f"Ignoring soax.on_error_retries={s.on_error_retries!r}: expected a number. "
+                f"Using {retries}."
             )
+        if not (1 <= retries <= 10):
+            warnings.append(
+                f"soax.on_error_retries={retries} is outside the 1..10 the gateway accepts. "
+                f"Using {soax_defaults['on_error_retries']}."
+            )
+            retries = soax_defaults["on_error_retries"]
+        s.on_error_retries = retries
 
         if s.bind_node and s.on_error == "replace":
-            errors.append(
-                "soax.bind_node cannot be combined with on_error='replace' "
-                "(the gateway rejects it with 400 ERR_INVALID_COMBINATION). "
-                "Use on_error 'retry' or 'fail', or turn bind_node off."
+            warnings.append(
+                "soax.bind_node cannot be combined with on_error='replace' - the gateway "
+                "answers 400 ERR_INVALID_COMBINATION. Turning bind_node off."
             )
+            s.bind_node = False
 
         if s.session_scope not in ("task", "geo"):
-            errors.append(
-                f"soax.session_scope must be 'task' or 'geo', got '{s.session_scope}'"
+            warnings.append(
+                f"Ignoring soax.session_scope={s.session_scope!r}: expected task|geo. "
+                f"Using {soax_defaults['session_scope']!r}."
             )
+            s.session_scope = soax_defaults["session_scope"]
 
-        if not s.package_password:
-            errors.append(
-                "SOAX_PACKAGE_PASSWORD is not set. Put the package password from the "
-                "SOAX dashboard (Settings tab) into .env. Do not put it in app.yaml: "
-                "that file is rendered in the Settings page of this app."
+        exec_defaults = _SECTION_DEFAULTS["execution"]
+        try:
+            concurrency = int(cfg.execution.max_concurrency)
+        except (TypeError, ValueError):
+            concurrency = 0
+        if concurrency < 1:
+            warnings.append(
+                f"execution.max_concurrency={cfg.execution.max_concurrency!r} would run no "
+                f"checks at all. Using {exec_defaults['max_concurrency']}."
             )
+            concurrency = exec_defaults["max_concurrency"]
+        cfg.execution.max_concurrency = concurrency
 
-        if cfg.execution.max_concurrency < 1:
-            errors.append(
-                f"execution.max_concurrency must be >= 1, got {cfg.execution.max_concurrency}"
+        try:
+            timeout = int(cfg.execution.timeout_sec)
+        except (TypeError, ValueError):
+            timeout = 0
+        if timeout < 1:
+            warnings.append(
+                f"execution.timeout_sec={cfg.execution.timeout_sec!r} is not a usable timeout. "
+                f"Using {exec_defaults['timeout_sec']}."
             )
+            timeout = exec_defaults["timeout_sec"]
+        cfg.execution.timeout_sec = timeout
 
-        if errors:
-            raise ValueError("Invalid configuration:\n  - " + "\n  - ".join(errors))
+        shots_defaults = _SECTION_DEFAULTS["screenshots"]
+        try:
+            workers = int(cfg.screenshots.max_workers)
+        except (TypeError, ValueError):
+            workers = 0
+        if workers < 1:
+            warnings.append(
+                f"screenshots.max_workers={cfg.screenshots.max_workers!r} would block every "
+                f"screenshot. Using {shots_defaults['max_workers']}."
+            )
+            workers = shots_defaults["max_workers"]
+        cfg.screenshots.max_workers = workers
+
+        return warnings
+
+    @classmethod
+    def _blocking_errors(cls, cfg: RootCfg) -> List[str]:
+        """
+        Problems that leave the app usable but make every check meaningless.
+
+        Only one so far. Without the package password the gateway refuses
+        everything, so a run would produce one failed check per mirror - forty
+        false "site unavailable" verdicts from one missing line. The app still
+        starts: a page that explains the problem is worth more to whoever has to
+        fix it than a container restarting in silence.
+        """
+        errors: List[str] = []
+        if not cfg.soax.package_password:
+            errors.append(
+                "SOAX_PACKAGE_PASSWORD is not set, so no check can reach the gateway. "
+                "Put the package password from the SOAX dashboard (Settings tab) into .env "
+                "and restart the container. Do not put it in app.yaml: that file is shown "
+                "in the Settings page of this app."
+            )
+        return errors
+
+    @classmethod
+    def blocking_errors(cls) -> List[str]:
+        if cls._cfg is None:
+            cls.init()
+        return list(cls._blocking)
 
     @classmethod
     def get(cls) -> RootCfg:
@@ -543,39 +732,57 @@ class ConfigStore:
         return cls._yaml_text
 
     @classmethod
-    def save_yaml(cls, text: str) -> tuple[bool, str | None]:
+    def save_yaml(cls, text: str) -> tuple[bool, str | None, List[str]]:
         """
-        Validates before writing. The previous version wrote first and reloaded
-        after, so a bad edit left a broken file on disk and a stale config in
-        memory: the app kept running and then refused to start next time.
+        Checks the text, writes it, and deliberately leaves the running config
+        alone. Returns (ok, error_message, warnings).
 
-        Returns (ok, error_message).
+        **The live config is not replaced** (решение 18). It used to be, but only
+        in the worker that handled the POST - so after a save one worker out of
+        four ran the new settings and three the old, and which one answered a
+        request was luck. One rule instead: the file on disk is the next
+        startup's configuration, and nothing changes until the container is
+        restarted.
+
+        Validation stays strict here, unlike at startup. Startup has to cope
+        with whatever is already on disk; this is someone typing into a form,
+        and the kind thing is to refuse the text and keep the old file. The
+        strictness is also what closes дефект 1: `:::not yaml:::` parses into a
+        one-key mapping, every section then fills in from defaults, and the
+        result used to be written over a working config.
         """
-        data_dir = cls.get().paths.data_dir
-        app_yaml = os.path.join(data_dir, "config", "app.yaml")
+        app_yaml = cls.config_path()
 
         try:
             data = yaml.safe_load(text)
         except yaml.YAMLError as e:
-            return False, f"YAML syntax error: {e}"
+            return False, f"YAML syntax error: {e}", []
+
+        if not isinstance(data, dict):
+            return False, "The configuration must be a mapping of sections, e.g. 'soax:'.", []
+
+        known = [section for section in data if section in KNOWN_SECTIONS]
+        if not known:
+            return False, (
+                "No known configuration section found. Expected at least one of: "
+                + ", ".join(KNOWN_SECTIONS)
+                + ". Refusing to overwrite the current configuration."
+            ), []
 
         try:
             candidate = cls._build(data)
             cls._override_from_env(candidate)
-            new_warnings = cls._normalize_transport(candidate)
-            new_warnings += cls._normalize_use_ipv6(candidate)
-            new_warnings += cls._normalize_alive_check(candidate)
-            cls._validate(candidate)
+            warnings = cls._normalize_transport(candidate)
+            warnings += cls._normalize_use_ipv6(candidate)
+            warnings += cls._normalize_alive_check(candidate)
+            warnings += cls._normalize_rules(candidate)
         except (TypeError, ValueError) as e:
-            return False, str(e)
+            return False, str(e), []
 
         try:
             with open(app_yaml, "w", encoding="utf-8") as f:
                 f.write(text)
         except OSError as e:
-            return False, f"Could not write {app_yaml}: {e}"
+            return False, f"Could not write {app_yaml}: {e}", []
 
-        cls._yaml_text = text
-        cls._cfg = candidate
-        cls._warnings = new_warnings
-        return True, None
+        return True, None, warnings

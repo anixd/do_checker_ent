@@ -76,7 +76,11 @@ def create_app() -> Flask:
             theme = "auto"  # Fallback
 
         return dict(default_theme=theme,
-            update_available=version_checker.get_update_status()
+            update_available=version_checker.get_update_status(),
+            # Surfaced in the page itself, not only in the log: a config read
+            # only in part is something the person using the app has to see.
+            config_warnings=ConfigStore.warnings(),
+            config_blocking=ConfigStore.blocking_errors(),
         )
 
     log.info("Application initialized (pid %s).", os.getpid())

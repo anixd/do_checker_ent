@@ -125,6 +125,12 @@ def launch_run():
         debug_mode=bool(request.form.get("debug_mode")),
     )
 
+    blocking = ConfigStore.blocking_errors()
+    if blocking:
+        message = "Configuration is incomplete: " + " ".join(blocking)
+        log.error("%s rejected: %s", "Run", message)
+        return jsonify({"error": message}), 503
+
     alive = ensure_proxy_alive(tasks, options)
     if not alive.ok:
         log.error("Run rejected: %s", alive.reason)
@@ -208,20 +214,26 @@ def catalog_update_list():
 
 @bp.get("/settings")
 def settings():
-    yaml = ConfigStore.raw_yaml()
+    # From disk, not from this worker's memory: the page edits a file, and with
+    # four workers the in-memory copy can be older than the file (решение 18).
     return render_template(
         "settings.html",
         active_page="settings",
-        yaml=yaml
+        yaml=ConfigStore.file_text()
     )
 
 
 @bp.post("/settings")
 def settings_save():
     yaml_text = request.form.get("yaml") or ""
-    ok, err = ConfigStore.save_yaml(yaml_text)
+    ok, err, warnings = ConfigStore.save_yaml(yaml_text)
     if ok:
-        flash("Settings saved successfully.", "settings")
+        # Saying it here rather than only in the docs: nobody reads the manual
+        # at the moment of pressing Save, and nothing takes effect until the
+        # container restarts.
+        flash("Saved. Restart the container for the changes to take effect.", "settings")
+        for warning in warnings:
+            flash(f"Will be corrected at startup: {warning}", "settings")
     else:
         flash(f"Settings NOT saved: {err}", "settings")
     return redirect(url_for("routes.settings"))
@@ -356,6 +368,12 @@ def launch_multi_geo_run():
         make_screenshot=bool(request.form.get("make_screenshot")),
         debug_mode=bool(request.form.get("debug_mode")),
     )
+
+    blocking = ConfigStore.blocking_errors()
+    if blocking:
+        message = "Configuration is incomplete: " + " ".join(blocking)
+        log.error("%s rejected: %s", "Multi-Geo Run", message)
+        return jsonify({"error": message}), 503
 
     alive = ensure_proxy_alive(tasks, options)
     if not alive.ok:

@@ -7,6 +7,9 @@ directly. Run from the project root:
     python -m unittest tests.test_config -v
 """
 
+import os
+import shutil
+import tempfile
 import unittest
 
 from config.loader import ALLOWED_TRANSPORTS, ConfigStore
@@ -153,6 +156,209 @@ class TestAliveCheck(unittest.TestCase):
         self.assertTrue(ac.enabled)
         self.assertEqual((ac.required_ok, ac.timeout_sec), (2, 10))
         self.assertEqual(len(warnings), 3, warnings)
+
+
+class ConfigFileTestCase(unittest.TestCase):
+    """
+    Drives ConfigStore.init() against a real file in a temp DATA_DIR, because
+    the things being tested here (duplicate keys, broken YAML, a missing file)
+    only exist at the file level.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        os.makedirs(os.path.join(self.tmp, "config"), exist_ok=True)
+        self.path = os.path.join(self.tmp, "config", "app.yaml")
+
+        saved = (ConfigStore._cfg, ConfigStore._warnings, ConfigStore._blocking,
+                 ConfigStore._yaml_text, os.environ.get("DATA_DIR"),
+                 os.environ.get("LOG_DIR"))
+        self.addCleanup(self._restore, saved)
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        os.environ["DATA_DIR"] = self.tmp
+        # Otherwise the default /logs is attempted and the host answers
+        # "read-only file system", adding a warning to every assertion here.
+        os.environ["LOG_DIR"] = os.path.join(self.tmp, "logs")
+
+    @staticmethod
+    def _restore(saved):
+        cfg, warnings, blocking, yaml_text, data_dir, log_dir = saved
+        ConfigStore._cfg, ConfigStore._warnings = cfg, warnings
+        ConfigStore._blocking, ConfigStore._yaml_text = blocking, yaml_text
+        for name, value in (("DATA_DIR", data_dir), ("LOG_DIR", log_dir)):
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+
+    @staticmethod
+    def without_transport_notice(warnings):
+        """
+        The "no default transport" notice is expected whenever a fixture omits
+        soax.transport, and says nothing about what is being tested.
+        """
+        return [w for w in warnings if "No default transport" not in w]
+
+    def load(self, text=None):
+        if text is not None:
+            with open(self.path, "w", encoding="utf-8") as f:
+                f.write(text)
+        ConfigStore.init()
+        return ConfigStore.get(), ConfigStore.warnings()
+
+
+class TestDuplicateKeys(ConfigFileTestCase):
+    """
+    PyYAML keeps the last duplicate and says nothing. We keep the first and say
+    where both were: the accidental line is almost always the one added below.
+    """
+
+    def test_duplicate_key_keeps_the_first_value(self):
+        cfg, warnings = self.load(
+            "soax:\n  session_scope: task\n  session_scope: geo\n"
+        )
+        self.assertEqual(cfg.soax.session_scope, "task")
+        self.assertTrue(any("duplicate key 'session_scope'" in w for w in warnings), warnings)
+
+    def test_the_warning_names_both_lines(self):
+        _cfg, warnings = self.load(
+            "soax:\n  session_scope: task\n  session_scope: geo\n"
+        )
+        hit = [w for w in warnings if "duplicate key" in w][0]
+        self.assertIn("app.yaml:3", hit)        # the duplicate
+        self.assertIn("line 2", hit)            # where it was first set
+
+    def test_duplicate_section_keeps_the_first_block(self):
+        # The dangerous one: PyYAML drops the whole first block silently, and
+        # every key in it falls back to a default nobody chose.
+        cfg, warnings = self.load(
+            "soax:\n  host: first.example\n  session_scope: geo\n"
+            "soax:\n  host: second.example\n"
+        )
+        self.assertEqual(cfg.soax.host, "first.example")
+        self.assertEqual(cfg.soax.session_scope, "geo")
+        self.assertTrue(any("duplicate key 'soax'" in w for w in warnings), warnings)
+
+    def test_a_clean_file_produces_no_warnings(self):
+        cfg, warnings = self.load("soax:\n  session_scope: geo\n  transport: http\n")
+        self.assertEqual(cfg.soax.session_scope, "geo")
+        self.assertEqual(warnings, [])
+
+
+class TestUnreadableConfig(ConfigFileTestCase):
+    """The field case: a container that would not start."""
+
+    def test_broken_indentation_starts_on_defaults(self):
+        cfg, warnings = self.load("soax:\n  on_error: retry\n   on_error: fail\n")
+        self.assertEqual(cfg.soax.on_error, "retry")        # the default
+        self.assertTrue(any("could not be parsed" in w for w in warnings), warnings)
+        self.assertTrue(any("line 3" in w for w in warnings), warnings)
+
+    def test_a_tab_starts_on_defaults(self):
+        _cfg, warnings = self.load("soax:\n\ton_error: retry\n")
+        self.assertTrue(any("could not be parsed" in w for w in warnings), warnings)
+
+    def test_a_missing_file_starts_on_defaults(self):
+        cfg, warnings = self.load()  # nothing written
+        self.assertEqual(cfg.soax.host, "proxy.soax.com")
+        self.assertTrue(any("not found" in w for w in warnings), warnings)
+
+    def test_a_document_that_is_not_a_mapping(self):
+        _cfg, warnings = self.load("just a string\n")
+        self.assertTrue(any("does not contain a mapping" in w for w in warnings), warnings)
+
+    def test_an_empty_file_is_not_a_problem(self):
+        cfg, warnings = self.load("")
+        self.assertEqual(cfg.soax.host, "proxy.soax.com")
+        self.assertEqual(self.without_transport_notice(warnings), [])
+
+
+class TestRuleNormalization(ConfigFileTestCase):
+    """Unusable values become defaults with a warning, instead of stopping the start."""
+
+    def test_bad_values_are_replaced(self):
+        cfg, warnings = self.load(
+            "soax:\n  on_error: nonsense\n  session_scope: whatever\n"
+            "execution:\n  max_concurrency: 0\n"
+        )
+        self.assertEqual(cfg.soax.on_error, "retry")
+        self.assertEqual(cfg.soax.session_scope, "task")
+        self.assertEqual(cfg.execution.max_concurrency, 3)
+        self.assertEqual(len(self.without_transport_notice(warnings)), 3, warnings)
+
+    def test_retries_outside_the_gateways_range(self):
+        cfg, warnings = self.load("soax:\n  on_error: retry\n  on_error_retries: 99\n")
+        self.assertEqual(cfg.soax.on_error_retries, 3)
+        self.assertTrue(any("1..10" in w for w in warnings), warnings)
+
+    def test_the_combination_the_gateway_rejects(self):
+        cfg, warnings = self.load("soax:\n  bind_node: true\n  on_error: replace\n")
+        self.assertFalse(cfg.soax.bind_node)
+        self.assertTrue(any("bind_node" in w for w in warnings), warnings)
+
+
+class TestBlockingErrors(ConfigFileTestCase):
+    """The app starts either way; only runs are refused."""
+
+    def test_no_package_password_blocks_runs(self):
+        saved = os.environ.pop("SOAX_PACKAGE_PASSWORD", None)
+        if saved is not None:
+            self.addCleanup(os.environ.__setitem__, "SOAX_PACKAGE_PASSWORD", saved)
+        self.load("soax:\n  session_scope: task\n")
+        blocking = ConfigStore.blocking_errors()
+        self.assertEqual(len(blocking), 1)
+        self.assertIn("SOAX_PACKAGE_PASSWORD", blocking[0])
+
+    def test_a_password_clears_it(self):
+        os.environ["SOAX_PACKAGE_PASSWORD"] = "pk_test"
+        self.addCleanup(os.environ.pop, "SOAX_PACKAGE_PASSWORD", None)
+        self.load("soax:\n  session_scope: task\n")
+        self.assertEqual(ConfigStore.blocking_errors(), [])
+
+
+class TestSaveYaml(ConfigFileTestCase):
+    """
+    Strict where startup is forgiving: this is someone typing into a form, and
+    the kind answer to nonsense is to keep the file they already have.
+    """
+
+    GOOD = "soax:\n  session_scope: geo\n  transport: http\n"
+
+    def test_valid_text_is_written(self):
+        self.load("soax:\n  session_scope: task\n")
+        ok, err, _warnings = ConfigStore.save_yaml(self.GOOD)
+        self.assertTrue(ok, err)
+        with open(self.path, encoding="utf-8") as f:
+            self.assertEqual(f.read(), self.GOOD)
+
+    def test_the_live_config_is_not_replaced(self):
+        # решение 18: the file is the next startup's configuration, nothing more.
+        cfg, _ = self.load("soax:\n  session_scope: task\n")
+        ConfigStore.save_yaml(self.GOOD)
+        self.assertEqual(ConfigStore.get().soax.session_scope, "task")
+        self.assertIs(ConfigStore.get(), cfg)
+
+    def test_text_with_no_known_section_is_refused(self):
+        # дефект 1: this parses into {':::not yaml::': None} and used to be
+        # written straight over a working config.
+        self.load(self.GOOD)
+        ok, err, _ = ConfigStore.save_yaml(":::not yaml:::")
+        self.assertFalse(ok)
+        self.assertIn("No known configuration section", err)
+        with open(self.path, encoding="utf-8") as f:
+            self.assertEqual(f.read(), self.GOOD)
+
+    def test_broken_syntax_is_refused(self):
+        self.load(self.GOOD)
+        ok, err, _ = ConfigStore.save_yaml("foo:\n\tbar: 1\n")
+        self.assertFalse(ok)
+        self.assertIn("YAML syntax error", err)
+
+    def test_fixable_problems_are_reported_but_saved(self):
+        self.load(self.GOOD)
+        ok, err, warnings = ConfigStore.save_yaml("soax:\n  on_error: nonsense\n")
+        self.assertTrue(ok, err)
+        self.assertTrue(any("on_error" in w for w in warnings), warnings)
 
 
 class TestUnknownSectionsAreIgnored(unittest.TestCase):

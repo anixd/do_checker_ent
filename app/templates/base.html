@@ -61,6 +61,25 @@
     {% endif %}
   {% endwith %}
 
+  {% if config_blocking or config_warnings %}
+    <div class="config-plaque {{ 'config-plaque-blocking' if config_blocking else '' }}" role="alert">
+      <strong>
+        {% if config_blocking %}
+          Configuration problem - checks cannot run:
+        {% else %}
+          The configuration was read with corrections:
+        {% endif %}
+      </strong>
+      <ul>
+        {% for item in config_blocking %}<li>{{ item }}</li>{% endfor %}
+        {% for item in config_warnings %}<li>{{ item }}</li>{% endfor %}
+      </ul>
+      <span class="muted">Fix <span class="code">data/config/app.yaml</span> (or
+        <span class="code">.env</span>) and restart the container - settings are applied at
+        startup only.</span>
+    </div>
+  {% endif %}
+
   <main>
     {% block content %}{% endblock %}
   </main>
