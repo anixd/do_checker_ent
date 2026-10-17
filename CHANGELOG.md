@@ -17,7 +17,7 @@ Anything from 1.0.0 onwards describes this repository.
 
 ---
 
-## [2.0.0] - 2026-10-XX
+## [2.0.0] - 2026-10-18
 
 A major release because the way a run reaches the proxy changed, not only what it reports.
 Everything below is new since the fork baseline.
