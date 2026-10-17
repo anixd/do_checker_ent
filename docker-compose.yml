@@ -26,6 +26,12 @@ services:
       - SOAX_SESSION_SCOPE=${SOAX_SESSION_SCOPE:-task}
       # Same trick for IPv6: DNS_USE_IPV6=true docker compose up -d --force-recreate
       - DNS_USE_IPV6
+      # ...and for the pre-run reachability check, so a test run can point it at
+      # unreachable targets without editing app.yaml.
+      - ALIVE_CHECK_ENABLED
+      - ALIVE_CHECK_TARGETS
+      - ALIVE_CHECK_REQUIRED_OK
+      - ALIVE_CHECK_TIMEOUT_SEC
 
     ports:
       - "${APP_HOST:-127.0.0.1}:${APP_PORT:-8888}:${APP_PORT:-8888}"

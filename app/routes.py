@@ -6,6 +6,7 @@ from datetime import datetime
 import threading
 import shutil
 import os
+from engine.alive import ensure_proxy_alive
 from engine.orchestrator import start_run, get_run_state
 from engine.tasks import (
     ALLOWED_RESOLVE,
@@ -123,6 +124,11 @@ def launch_run():
         make_screenshot=bool(request.form.get("make_screenshot")),
         debug_mode=bool(request.form.get("debug_mode")),
     )
+
+    alive = ensure_proxy_alive(tasks, options)
+    if not alive.ok:
+        log.error("Run rejected: %s", alive.reason)
+        return jsonify({"error": alive.reason}), 503
 
     log.info(
         "Accepted %s run request: %s tasks, country=%s, channel=%s.",
@@ -350,6 +356,11 @@ def launch_multi_geo_run():
         make_screenshot=bool(request.form.get("make_screenshot")),
         debug_mode=bool(request.form.get("debug_mode")),
     )
+
+    alive = ensure_proxy_alive(tasks, options)
+    if not alive.ok:
+        log.error("Multi-Geo Run rejected: %s", alive.reason)
+        return jsonify({"error": alive.reason}), 503
 
     log.info("Accepted /run-multi-geo request: %s tasks, channel=%s.",
              len(tasks), channel.slug)

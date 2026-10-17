@@ -199,7 +199,7 @@ document.addEventListener("DOMContentLoaded", () => {
           response = await fetch(form.action, { method: "POST", body: formData });
         } catch (err) {
           console.error("Fetch error:", err);
-          resultsContainer.innerHTML = `<div class="result-card status-error">Network error submitting run.</div>`;
+          resultsContainer.innerHTML = `<div class="result-message status-error">Network error submitting run.</div>`;
           setBusy(false); return;
         }
 
@@ -207,7 +207,7 @@ document.addEventListener("DOMContentLoaded", () => {
           let errorMsg = 'Unknown error';
           try { const errData = await response.json(); errorMsg = errData.error || errorMsg; }
           catch(jsonErr) { errorMsg = await response.text(); }
-          resultsContainer.innerHTML = `<div class="result-card status-error">Error: ${errorMsg} (${response.status})</div>`;
+          resultsContainer.innerHTML = `<div class="result-message status-error">Error ${response.status}: ${errorMsg}</div>`;
           setBusy(false); return;
         }
 
@@ -258,7 +258,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 // Nothing was ever rendered: the run is executing somewhere this
                 // stream cannot see - another gunicorn worker (see дефект 2).
                 resultsContainer.innerHTML =
-                    `<div class="result-card status-error">Live updates unavailable: ${payload.reason}</div>`;
+                    `<div class="result-message status-error">Live updates unavailable: ${payload.reason}</div>`;
                 clearTotals();
             }
          };

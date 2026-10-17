@@ -1,9 +1,9 @@
 """
 The seam a provider has to fit through.
 
-Deliberately three operations wide, no more. Everything the engine needs from a
-proxy service is: build me a session for this task, tell me where it came out,
-and tell me whether a failure was yours or the target site's. The rest of a
+Deliberately narrow. Everything the engine needs from a proxy service is: build
+me a session for this task, tell me where it came out, tell me whether you are
+reachable at all, and tell me whether a failure was yours or the target site's. The rest of a
 check - timings, redirects, screenshots, the Markdown card - is transport work
 and belongs to the engine.
 
@@ -56,6 +56,24 @@ class ScreenshotProxy:
     transport: str
 
 
+@dataclass
+class AliveProbe:
+    """
+    One request of the pre-run reachability check.
+
+    Kept raw on purpose: the provider reports what happened to each target and
+    the engine decides what that means (engine/alive.py owns the "two of three"
+    policy). A provider that needs a different notion of "responded" overrides
+    `ok`, not the threshold.
+    """
+
+    target: str
+    ok: bool
+    status: int | None = None
+    ms: int = 0
+    error: str | None = None
+
+
 @runtime_checkable
 class Provider(Protocol):
     """What engine/worker.py calls. See providers/soax_provider.py for the one implementation."""
@@ -72,6 +90,25 @@ class Provider(Protocol):
         Returns a human-readable warning when the lookup failed but the proxy is
         usable, None when there is nothing to report, and raises
         ProviderGatewayError when the service refuses the request outright.
+        """
+
+    def check_alive(self, task: Any, options: Any, targets: list[str],
+                    timeout_sec: int, stop_after_ok: int = 0) -> list[AliveProbe]:
+        """
+        Probes a handful of third-party sites through the proxy and reports
+        each outcome.
+
+        Takes a task and the run options rather than a ready session, because
+        how many sessions this needs is the provider's business: SOAX gives
+        each probe its own, so that one target failing cannot drag another
+        probe down with it (see providers/soax_provider.py).
+
+        Must not raise for an unreachable target or a refusing gateway - those
+        are results, and a dead provider is exactly what the caller is asking
+        about. The caller decides how many successes are enough; stop_after_ok
+        tells the provider it may stop once that many have answered, so a
+        healthy proxy is not held up by one slow target. Fewer probes than
+        targets in the returned list means it stopped early.
         """
 
     def check_response(self, resp: Any) -> None:

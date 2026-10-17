@@ -77,6 +77,30 @@ class SoaxCfg:
     package_password: str | None  # SECRET: .env only, never in app.yaml
 
 
+def _as_list(val: Any) -> List[str]:
+    """Comma-separated in the environment, a YAML list in the file."""
+    if isinstance(val, (list, tuple)):
+        return [str(item).strip() for item in val if str(item).strip()]
+    return [part.strip() for part in str(val).split(",") if part.strip()]
+
+
+@dataclass
+class AliveCheckCfg:
+    """
+    The short "is the proxy service reachable at all" probe run before a check.
+
+    Without it a provider outage reads as forty unavailable mirrors - a false
+    report that also costs the traffic of producing it. Three different targets
+    rather than three requests to one: "two of three failed" then means two
+    independent destinations are unreachable, which is a property of the proxy
+    and not of a site having a bad day.
+    """
+    enabled: bool
+    targets: List[str]
+    required_ok: int
+    timeout_sec: int
+
+
 @dataclass
 class DnsCfg:
     """
@@ -105,6 +129,7 @@ class RootCfg:
     execution: ExecCfg
     screenshots: ShotsCfg
     soax: SoaxCfg
+    alive_check: AliveCheckCfg
     dns: DnsCfg
     http_client: HttpCfg
 
@@ -148,6 +173,26 @@ _SECTION_DEFAULTS: Dict[str, Dict[str, Any]] = {
         "preflight": True,
         "package_id": None,
         "package_password": None,
+    },
+    "alive_check": {
+        "enabled": True,
+        # Three destinations run by three unrelated operators (IANA, Mozilla,
+        # Cloudflare), each answering a few hundred bytes at most. Measured
+        # through the gateway from az on 2026-10-17: 350-580 ms each.
+        # google.com is deliberately absent - it answers proxy addresses with
+        # captchas and 429, which would read as "the proxy is down" on a
+        # perfectly healthy gateway. www.ripe.net was in the first draft and is
+        # out for cost: it answers 138 KB per probe, which is paid proxy
+        # traffic spent on asking a question, and its latency ranged from 1.3 s
+        # to 9.6 s - against a 10 s timeout that is a false "dead" waiting to
+        # happen.
+        "targets": [
+            "http://example.com",
+            "http://detectportal.firefox.com/success.txt",
+            "http://cloudflare.com/cdn-cgi/trace",
+        ],
+        "required_ok": 2,
+        "timeout_sec": 10,
     },
     "dns": {
         "use_ipv6": False,
@@ -194,6 +239,7 @@ class ConfigStore:
         cls._override_from_env(cfg)
         cls._warnings.extend(cls._normalize_transport(cfg))
         cls._warnings.extend(cls._normalize_use_ipv6(cfg))
+        cls._warnings.extend(cls._normalize_alive_check(cfg))
         cls._validate(cfg)
 
         cls._cfg = cfg
@@ -228,6 +274,7 @@ class ConfigStore:
             execution=ExecCfg(**_only_known(ExecCfg, "execution")),
             screenshots=ShotsCfg(**_only_known(ShotsCfg, "screenshots")),
             soax=SoaxCfg(**_only_known(SoaxCfg, "soax")),
+            alive_check=AliveCheckCfg(**_only_known(AliveCheckCfg, "alive_check")),
             dns=DnsCfg(**_only_known(DnsCfg, "dns")),
             http_client=HttpCfg(**_only_known(HttpCfg, "http_client")),
         )
@@ -258,6 +305,11 @@ class ConfigStore:
             "SOAX_PREFLIGHT": (cfg.soax, "preflight", _as_bool),
             "SOAX_PACKAGE_ID": (cfg.soax, "package_id"),
             "SOAX_PACKAGE_PASSWORD": (cfg.soax, "package_password"),
+
+            "ALIVE_CHECK_ENABLED": (cfg.alive_check, "enabled", _as_bool),
+            "ALIVE_CHECK_TARGETS": (cfg.alive_check, "targets", _as_list),
+            "ALIVE_CHECK_REQUIRED_OK": (cfg.alive_check, "required_ok", int),
+            "ALIVE_CHECK_TIMEOUT_SEC": (cfg.alive_check, "timeout_sec", int),
 
             "DNS_USE_IPV6": (cfg.dns, "use_ipv6", _as_bool),
 
@@ -351,6 +403,85 @@ class ConfigStore:
         return warnings
 
     @classmethod
+    def _normalize_alive_check(cls, cfg: RootCfg) -> List[str]:
+        """
+        Makes the alive-check section usable whatever is in the file, and never
+        raises (решение 16).
+
+        The fallbacks lean towards keeping the check running: it exists to stop
+        a run against a dead provider, so a typo in `required_ok` must not
+        quietly switch that protection off. An empty target list falls back to
+        the defaults rather than disabling the check for the same reason.
+        """
+        warnings: List[str] = []
+        ac = cfg.alive_check
+        defaults = _SECTION_DEFAULTS["alive_check"]
+
+        if not isinstance(ac.enabled, bool):
+            raw = ac.enabled
+            value = str(raw).strip().lower()
+            if value in ("1", "true", "yes", "on"):
+                ac.enabled = True
+            elif value in ("0", "false", "no", "off"):
+                ac.enabled = False
+            else:
+                ac.enabled = True
+                warnings.append(
+                    f"Ignoring alive_check.enabled={raw!r}: expected a boolean "
+                    "(true|false). The check stays on."
+                )
+
+        targets = _as_list(ac.targets)
+        if not targets:
+            targets = list(defaults["targets"])
+            warnings.append(
+                "alive_check.targets is empty; falling back to the built-in list "
+                f"({', '.join(targets)})."
+            )
+        ac.targets = targets
+
+        try:
+            required = int(ac.required_ok)
+        except (TypeError, ValueError):
+            required = defaults["required_ok"]
+            warnings.append(
+                f"Ignoring alive_check.required_ok={ac.required_ok!r}: expected a number. "
+                f"Using {required}."
+            )
+        if required < 1:
+            warnings.append(
+                f"alive_check.required_ok={required} would make the check pass even when "
+                "nothing answers. Raised to 1."
+            )
+            required = 1
+        if required > len(ac.targets):
+            warnings.append(
+                f"alive_check.required_ok={required} exceeds the number of targets "
+                f"({len(ac.targets)}), which no run could ever satisfy. Lowered to "
+                f"{len(ac.targets)}."
+            )
+            required = len(ac.targets)
+        ac.required_ok = required
+
+        try:
+            timeout = int(ac.timeout_sec)
+        except (TypeError, ValueError):
+            timeout = defaults["timeout_sec"]
+            warnings.append(
+                f"Ignoring alive_check.timeout_sec={ac.timeout_sec!r}: expected a number. "
+                f"Using {timeout}."
+            )
+        if timeout < 1:
+            warnings.append(
+                f"alive_check.timeout_sec={timeout} is not a usable timeout; "
+                f"using {defaults['timeout_sec']}."
+            )
+            timeout = defaults["timeout_sec"]
+        ac.timeout_sec = timeout
+
+        return warnings
+
+    @classmethod
     def warnings(cls) -> List[str]:
         return list(cls._warnings)
 
@@ -433,6 +564,7 @@ class ConfigStore:
             cls._override_from_env(candidate)
             new_warnings = cls._normalize_transport(candidate)
             new_warnings += cls._normalize_use_ipv6(candidate)
+            new_warnings += cls._normalize_alive_check(candidate)
             cls._validate(candidate)
         except (TypeError, ValueError) as e:
             return False, str(e)

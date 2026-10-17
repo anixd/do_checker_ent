@@ -369,6 +369,20 @@ nav.tabs a.active {
     font-size: 14px;
     color: var(--c-text-muted);
 }
+/* A whole-run message (a refused run, a stream that cannot be opened).
+   Not .result-card: that is a four-column grid, so a bare string lands in the
+   40px icon column and wraps to one or two characters per line - which is how
+   "SOAX proxy service is not reachable" came out as "SOAXproxy ...". */
+.result-message {
+    display: block;
+    border: 1px solid var(--c-border-light);
+    border-radius: 8px;
+    padding: 12px 16px;
+    margin-bottom: 12px;
+    background-color: var(--c-bg-body);
+    line-height: 1.5;
+}
+
 /* Totals plaque: shown above and below the results of a run */
 .run-totals {
     margin: 12px 0 0;
