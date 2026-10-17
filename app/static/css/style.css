@@ -369,6 +369,29 @@ nav.tabs a.active {
     font-size: 14px;
     color: var(--c-text-muted);
 }
+/* Configuration problems, shown on every page: a config read only in part is
+   not something to leave in the log where nobody is looking. */
+.config-plaque {
+    border: 1px solid var(--c-flash-info-border);
+    background-color: var(--c-flash-info-bg);
+    color: var(--c-flash-info-text);
+    border-radius: 6px;
+    padding: 12px 16px;
+    margin: 0 0 16px;
+    font-size: 14px;
+    line-height: 1.5;
+}
+.config-plaque ul {
+    margin: 8px 0;
+    padding-left: 20px;
+}
+.config-plaque li { margin-bottom: 4px; }
+.config-plaque-blocking {
+    border-color: var(--c-text-danger);
+    background-color: var(--c-bg-secondary);
+    color: var(--c-text-danger);
+}
+
 /* A whole-run message (a refused run, a stream that cannot be opened).
    Not .result-card: that is a four-column grid, so a bare string lands in the
    40px icon column and wraps to one or two characters per line - which is how
