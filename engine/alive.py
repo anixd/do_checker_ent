@@ -1,5 +1,5 @@
 """
-The pre-run reachability check (Этап 5).
+The pre-run reachability check.
 
 Why it exists: when the proxy service is down, a run reports every mirror as
 unavailable. That is a false report - the mirrors may be perfectly fine - and
@@ -52,7 +52,7 @@ def _country_for_run(tasks: List[CheckTask]) -> str:
     row's country in Multi-Geo, the first catalog country in ALL mode. Probing
     every country is out of the question - the point of this check is to find
     out quickly whether the provider is up, and twelve countries times three
-    requests is not quickly (решение 2 Этапа 5).
+    requests is not quickly.
     """
     for task in tasks:
         if task.is_valid and task.country:
@@ -65,9 +65,9 @@ def ensure_proxy_alive(tasks: List[CheckTask], options: RunOptions) -> AliveResu
     Runs the probe and returns a verdict. Never raises: a failure to probe is
     itself a "not alive" answer, and the caller has to be able to say so.
 
-    Deliberately uncached (решение 5 Этапа 5). A cached "alive" from a minute
-    ago is exactly the reassurance that is worthless - the provider can go down
-    in that minute - and the saving would be a couple of seconds.
+    Deliberately uncached. A cached "alive" from a minute ago is exactly the
+    reassurance that is worthless - the provider can go down in that minute -
+    and the saving would be a couple of seconds.
     """
     cfg = ConfigStore.get().alive_check
 

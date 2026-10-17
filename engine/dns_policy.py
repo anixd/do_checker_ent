@@ -1,10 +1,9 @@
 """
-Process-wide IPv6 policy (решение 14).
+Process-wide IPv6 policy.
 
-SOAX does not route IPv6 - verified against an IPv6-only host, which failed both
-by name and by explicit address, and seen in the wild as the gateway answering
-"0x03: Network unreachable". So every outbound attempt over IPv6 is a guaranteed
-failure, and in a mirror report a guaranteed failure reads as "the site is down":
+SOAX does not route IPv6: an IPv6-only host is unreachable through the gateway
+both by name and by explicit address, and the gateway answers "0x03: Network
+unreachable". So every outbound attempt over IPv6 is a guaranteed failure, and in a mirror report a guaranteed failure reads as "the site is down":
 a false verdict, which is worse than no check at all.
 
 Hence a single switch (`dns.use_ipv6`, off by default) applied where the choice

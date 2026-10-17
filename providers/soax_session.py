@@ -22,7 +22,6 @@ from typing import Any, Dict
 
 from .base import ProviderGatewayError
 
-# Verified against the gateway on 2026-07-28.
 ALLOWED_NETWORKS = ("res", "mob", "res_mob", "any")
 ALLOWED_ON_ERROR = ("replace", "retry", "fail")
 

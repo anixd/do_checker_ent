@@ -59,17 +59,16 @@ def sse_attach(run_id: str) -> "queue.Queue[str] | None":
     Hands the run's queue to an SSE client. Returns None when this process does
     not know the run.
 
-    It used to create a fresh queue and store it under the run id, which
-    silently replaced the one start_run had made - so `run_started`, emitted
-    before any client could connect, went into a queue nobody would ever read
-    (dev/planning.md, дефект 2). Attaching instead of subscribing is the fix,
-    and it is what lets a client that connects late still receive everything.
+    Attaching, not subscribing: a client that created its own queue here
+    would silently replace the one start_run made, and `run_started` - emitted
+    before any client can connect - would go into a queue nobody reads. As it
+    is, a client that connects late still receives everything.
 
     None has two causes, and the client cannot tell them apart: a run served by
-    another gunicorn worker (state lives in process memory - the half of дефект
-    2 this does not fix), or a run whose stream has already been read and
-    cleaned up. Either way the caller answers once and closes, rather than
-    holding open a stream that will never carry anything.
+    another gunicorn worker, since run state lives in process memory, or a run
+    whose stream has already been read and cleaned up. Either way the caller
+    answers once and closes, rather than holding open a stream that will never
+    carry anything.
     """
     with _lock:
         return _sse_queues.get(run_id)
@@ -138,8 +137,8 @@ def _sse_task_list(tasks: List[CheckTask]) -> List[dict]:
     `index` is the task's position in the input and the row's identity for the
     rest of the run: check_started and check_finished carry it, and the client
     addresses rows by it rather than by url+country. That is what makes the
-    output order the input order (решение 5) instead of the order the pool
-    happened to finish in.
+    output order the input order instead of the order the pool happened to
+    finish in.
     """
     return [
         {

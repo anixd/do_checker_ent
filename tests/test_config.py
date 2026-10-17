@@ -112,7 +112,7 @@ class TestAliveCheck(unittest.TestCase):
     """
     The fallbacks lean towards keeping the check running: it exists to stop a
     run against a dead provider, so a typo must not quietly switch that
-    protection off (решение 16).
+    protection off.
     """
 
     @staticmethod
@@ -332,15 +332,16 @@ class TestSaveYaml(ConfigFileTestCase):
             self.assertEqual(f.read(), self.GOOD)
 
     def test_the_live_config_is_not_replaced(self):
-        # решение 18: the file is the next startup's configuration, nothing more.
+        # The file is the next startup's configuration, nothing more.
         cfg, _ = self.load("soax:\n  session_scope: task\n")
         ConfigStore.save_yaml(self.GOOD)
         self.assertEqual(ConfigStore.get().soax.session_scope, "task")
         self.assertIs(ConfigStore.get(), cfg)
 
     def test_text_with_no_known_section_is_refused(self):
-        # дефект 1: this parses into {':::not yaml::': None} and used to be
-        # written straight over a working config.
+        # This parses into {':::not yaml::': None}: every section then fills
+        # in from defaults, and the result would be written over a working
+        # config.
         self.load(self.GOOD)
         ok, err, _ = ConfigStore.save_yaml(":::not yaml:::")
         self.assertFalse(ok)

@@ -1,14 +1,11 @@
 """
 What a run is made of.
 
-Before this module the orchestrator had two near-identical paths: one taking a
-flat list of URLs with a single country, the other a list of pre-parsed
-dictionaries for Multi-Geo. The ALL-country mode of the first path built the
-second path's input by hand in the route. Three shapes, three places to keep in
-step.
+One shape for every mode - a list of CheckTask - and three pure functions that
+build it, so that a single country, the ALL-country expansion and Multi-Geo do
+not become three input formats with three places to keep in step.
 
-Here there is one shape - a list of CheckTask - and three pure functions that
-build it. Pure on purpose: no config, no network, no filesystem, so the parsing
+Pure on purpose: no config, no network, no filesystem, so the parsing
 and the session-id arithmetic are unit-testable, which is where the subtle parts
 live (deduplication order, per-row parse errors, and the session scope rules
 that the gateway enforces with 409 SESSION_PARAMS_MISMATCH).
@@ -108,7 +105,8 @@ def make_channel(provider: str | None, transport: str | None, resolve: str | Non
 
     There is no fallback for the transport here on purpose: the caller passes
     either the submitted value or the configured default, and if neither exists
-    the run must be refused rather than guessed (решение 11).
+    the run must be refused rather than guessed - http and socks5 can give
+    different answers for the same mirror.
     """
     chosen_provider = (provider or "soax").strip().lower()
     chosen_transport = (transport or "").strip().lower()
@@ -199,7 +197,7 @@ def normalize_url(raw_url: str) -> str:
 
 def run_totals(tasks: Iterable[CheckTask]) -> dict:
     """
-    What the run consists of, for the totals plaque (решение 6).
+    What the run consists of, for the totals shown above the results.
 
     Rows that never reached the provider are counted as checks - they are part
     of what was submitted and the reader has to see they exist - but not as

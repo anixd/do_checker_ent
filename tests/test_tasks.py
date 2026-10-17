@@ -122,7 +122,7 @@ class TestMultiGeo(unittest.TestCase):
 
 class TestRunTotals(unittest.TestCase):
     """
-    Feeds the totals plaque (решение 6). The subtle part is what an unparseable
+    Feeds the totals shown above the results. The subtle part is what an unparseable
     row counts as: a check (it was submitted and the reader must see it) but not
     a domain or a country (it was never checked anywhere).
     """

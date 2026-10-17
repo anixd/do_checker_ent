@@ -16,7 +16,7 @@ _PROVIDERS: dict[str, Provider] = {
 }
 
 _PLANNED = {
-    "fastproxys": "fastproxys.net is not implemented yet (planned, see dev/planning.md)",
+    "fastproxys": "fastproxys.net is not implemented yet",
 }
 
 

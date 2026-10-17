@@ -1,11 +1,10 @@
 """
-Unit tests for engine/dns_policy.py - the IPv6 switch (решение 14).
+Unit tests for engine/dns_policy.py - the IPv6 switch.
 
 No network: the filter is installed over a fake resolver, so what comes back is
-decided by the test rather than by whatever DNS the machine happens to have.
-That is the point - on the development stand neither the host nor the container
-is given AAAA records at all, so a live lookup can never show the filter doing
-its job.
+decided by the test rather than by whatever DNS the machine happens to have. A
+live lookup is no substitute - an environment without IPv6 connectivity returns
+no AAAA records at all, and the filter would have nothing to drop.
 
     venv/bin/python -m unittest tests.test_dns_policy -v
 """
