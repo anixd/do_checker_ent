@@ -10,31 +10,28 @@ services:
     env_file:
       - .env
 
-    # Declared explicitly so they can be overridden per run from the shell,
-    # e.g. GUNICORN_TIMEOUT=5 docker-compose up -d --force-recreate
-    # List syntax, not a mapping, because of DNS_USE_IPV6 at the end: a bare
-    # name is passed through only when it is actually set in the shell, while
-    # `DNS_USE_IPV6: ${DNS_USE_IPV6:-false}` would export an empty-or-false
-    # value on every run and permanently override app.yaml.
+    # The list of names allowed through to the container, so that any of them can
+    # be set for a single run from the shell:
+    #   GUNICORN_WORKERS=1 docker compose up -d --force-recreate
+    #
+    # Bare names, never `NAME=${NAME:-default}`. A default here would be put in
+    # the container's environment on every run, and the environment overrides
+    # app.yaml - so `session_scope: geo` in the file would be ignored in favour
+    # of a default nobody asked for. Unset means the variable does not reach the
+    # container at all, leaving app.yaml (or the application's own default) to
+    # decide. Values in .env still apply: compose reads it both as env_file and
+    # for ${...} substitution.
     environment:
-      - GUNICORN_WORKERS=${GUNICORN_WORKERS:-4}
-      - GUNICORN_TIMEOUT=${GUNICORN_TIMEOUT:-180}
-      - GUNICORN_GRACEFUL_TIMEOUT=${GUNICORN_GRACEFUL_TIMEOUT:-30}
-      - GUNICORN_RELOAD=${GUNICORN_RELOAD:-true}
-      # Overridable per run so session scope can be exercised without editing
-      # .env: SOAX_SESSION_SCOPE=geo docker compose up -d --force-recreate
-      - SOAX_SESSION_SCOPE=${SOAX_SESSION_SCOPE:-task}
-      # Same trick for IPv6: DNS_USE_IPV6=true docker compose up -d --force-recreate
+      - GUNICORN_WORKERS
+      - GUNICORN_TIMEOUT
+      - GUNICORN_GRACEFUL_TIMEOUT
+      - GUNICORN_RELOAD
+      - SOAX_SESSION_SCOPE
       - DNS_USE_IPV6
-      # ...and for the pre-run reachability check, so a test run can point it at
-      # unreachable targets without editing app.yaml.
       - ALIVE_CHECK_ENABLED
       - ALIVE_CHECK_TARGETS
       - ALIVE_CHECK_REQUIRED_OK
       - ALIVE_CHECK_TIMEOUT_SEC
-      # Normally comes from .env. Listed so a test run can blank it out and see
-      # what the app does with no package password:
-      # SOAX_PACKAGE_PASSWORD= docker compose up -d --force-recreate
       - SOAX_PACKAGE_PASSWORD
 
     ports:
