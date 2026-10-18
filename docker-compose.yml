@@ -4,7 +4,7 @@ services:
       context: .
       dockerfile: docker/Dockerfile
 
-    image: do-checker-ent:2.0.0
+    image: do-checker-ent:2.0.1
     container_name: do-checker-ent
 
     env_file:
