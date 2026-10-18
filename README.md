@@ -1,4 +1,4 @@
-# DutyOps Mirrors Checker (do_checker_ent)
+# DO Mirrors Checker (do_checker_ent)
 
 A web application that checks whether websites ("mirrors") are reachable through
 the SOAX proxy service from a chosen country,
