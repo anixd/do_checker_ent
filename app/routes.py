@@ -269,7 +269,7 @@ def clear_logs():
     cfg = ConfigStore.get()
     logs_dir = os.path.abspath(cfg.paths.logs_dir)
 
-    log.warning(f"Attempting to clear contents of log directory: {logs_dir}")
+    log.warning(f"Attempting to clear run directories in: {logs_dir}")
 
     # Проверка, что /logs существует и это действительно dir
     if not os.path.isdir(logs_dir):
@@ -277,29 +277,42 @@ def clear_logs():
         flash("Error: Log directory not found.", "checker")
         return jsonify({"success": False, "message": "Log directory not found"}), 500
 
-    if 'logs' not in logs_dir.split(os.path.sep)[-2:]:  # Проверянм последние два компонента пути
+    if 'logs' not in logs_dir.split(os.path.sep)[-2:]:  # Проверяем последние два компонента пути
         log.error(f"Safety check failed: Log directory path seems unsafe: {logs_dir}")
         flash("Error: Log directory path seems unsafe.", "checker")
         return jsonify({"success": False, "message": "Unsafe log directory path"}), 500
 
+    # Directories only - those are the per-run reports (logs/<date>/<run>/).
+    # The application's own logs are files at the top level of this directory and
+    # they stay: they are the record of how those reports were produced, and
+    # dropping old reports is not a reason to lose it. Symlinks are skipped
+    # rather than followed - this deletes recursively.
+    removed, failed = 0, 0
     try:
-        # грохаем всё внутри /logs
-        for filename in os.listdir(logs_dir):
-            file_path = os.path.join(logs_dir, filename)
+        for name in os.listdir(logs_dir):
+            path = os.path.join(logs_dir, name)
+            if os.path.islink(path) or not os.path.isdir(path):
+                continue
             try:
-                if os.path.isfile(file_path) or os.path.islink(file_path):
-                    os.unlink(file_path)
-                elif os.path.isdir(file_path):
-                    shutil.rmtree(file_path)
+                shutil.rmtree(path)
+                removed += 1
             except Exception as e:
-                log.error(f"Failed to delete {file_path}. Reason: {e}")
+                failed += 1
+                log.error(f"Failed to delete {path}. Reason: {e}")
 
-        log.info(f"Successfully cleared contents of log directory: {logs_dir}")
-        flash("Logs cleared successfully.", "checker")
-        return jsonify({"success": True}), 200
+        log.info(
+            f"Cleared run directories in {logs_dir}: {removed} removed, {failed} failed; "
+            "application logs kept"
+        )
+        if failed:
+            flash(f"Run logs cleared ({removed} removed, {failed} failed). "
+                  f"Application logs kept.", "checker")
+        else:
+            flash(f"Run logs cleared ({removed} removed). Application logs kept.", "checker")
+        return jsonify({"success": True, "removed": removed, "failed": failed}), 200
 
     except Exception as e:
-        log.error(f"Failed to clear log directory {logs_dir}: {e}", exc_info=True)
+        log.error(f"Failed to clear run directories in {logs_dir}: {e}", exc_info=True)
         flash(f"Error clearing logs: {e}", "checker")
         return jsonify({"success": False, "message": str(e)}), 500
 

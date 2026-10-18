@@ -17,6 +17,28 @@ Anything from 1.0.0 onwards describes this repository.
 
 ---
 
+## [Unreleased]
+
+### What's new
+
+* **TROUBLESHOOTING.md.** What the application writes down and how to get an
+  answer out of it:
+  what each marker in `engine.log` means,
+  and a recipe for every question that usually sends someone into the log —
+  why a run did not start, whether the proxy or the site is at fault,
+  why a screenshot is missing, why a worker died.
+  Linked from the README and from the Help page.
+
+### Changed
+
+* **`Clear logs` keeps the application's own logs.**
+  The button removes the per-run directories under `./logs/` and leaves
+  `engine.log`, `access.log` and `faulthandler.log` alone.
+  It used to wipe the whole directory,
+  so clearing out old reports also destroyed the record of how they were produced.
+
+---
+
 ## [2.0.0] - 2026-10-18
 
 A major release because the way a run reaches the proxy changed, not only what it reports.
