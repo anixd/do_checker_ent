@@ -84,6 +84,15 @@
     {% block content %}{% endblock %}
   </main>
 
+  <footer class="app-footer">
+    DO Mirrors Checker
+    {%- if app_version == 'unknown' %}
+      <span class="code">(version unknown)</span>
+    {%- else %}
+      <span class="code">v{{ app_version }}</span>
+    {%- endif %}
+  </footer>
+
   <script src="{{ static_v('js/main.js') }}"></script>
 
 </body>

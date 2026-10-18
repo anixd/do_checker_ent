@@ -25,6 +25,22 @@ _lock = threading.Lock()
 _singleton_handle = None
 
 
+def local_version() -> str:
+    """
+    The running version, as written in the VERSION file at the project root.
+
+    Read on every call rather than cached: the file is tiny, and a release
+    rewrites it, so caching would only guarantee a stale number until the next
+    restart. Returns "unknown" when the file is missing - it is not
+    configuration, and a page must not fail over it.
+    """
+    try:
+        with open(LOCAL_VERSION_FILE, "r", encoding="utf-8") as f:
+            return f.read().strip() or "unknown"
+    except OSError:
+        return "unknown"
+
+
 def get_update_status() -> bool:
     """
     Безопасно получает текущий статус обновления.

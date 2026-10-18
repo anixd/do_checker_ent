@@ -1,4 +1,4 @@
-# DutyOps Mirrors Checker (do_checker_ent)
+# DO Mirrors Checker (do_checker_ent)
 
 A web application that checks whether websites ("mirrors") are reachable through
 the SOAX proxy service from a chosen country,
@@ -528,8 +528,8 @@ A check's log file looks like this:
 ```
 # example.com
 Started: 2026-10-17T13:43:53
-Geo: AZ (requested) — exit node: AZ / Yevlax City / Yevlakh / Aztelekom LLC AS8814
-Proxy: SOAX session dc3a4a798100, ext_ip: 158.181.44.176
+Geo: AZ (requested) — exit node: AZ / Baku / Example Telecom AS64496
+Proxy: SOAX session dcab12cd3400, ext_ip: 203.0.113.42
 Provider: soax
 Transport: http
 DNS resolve: remote (on the exit node)
@@ -585,7 +585,7 @@ Both directories are bind-mounted from the host, so they survive container rebui
 with the run and the URL on every line that belongs to a check:
 
 ```
-2026-10-17 13:43:50 [INFO] [pid=14] [run=3a4a7981d3db url=example.com] engine: Task started.
+2026-10-17 13:43:50 [INFO] [pid=14] [run=ab12cd34ef56 url=example.com] engine: Task started.
 ```
 
 That is what makes a report from days ago readable:

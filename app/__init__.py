@@ -76,6 +76,7 @@ def create_app() -> Flask:
             theme = "auto"  # Fallback
 
         return dict(default_theme=theme,
+            app_version=version_checker.local_version(),
             update_available=version_checker.get_update_status(),
             # Surfaced in the page itself, not only in the log: a config read
             # only in part is something the person using the app has to see.

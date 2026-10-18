@@ -15,8 +15,8 @@ import unittest
 from engine import dns_policy
 from engine.classify import classify_transport
 
-V4 = (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443))
-V6 = (socket.AF_INET6, socket.SOCK_STREAM, 6, "", ("2606:2800:220:1:248:1893:25c8:1946", 443, 0, 0))
+V4 = (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("203.0.113.34", 443))
+V6 = (socket.AF_INET6, socket.SOCK_STREAM, 6, "", ("2001:db8::1", 443, 0, 0))
 
 
 class FakeResolver:
