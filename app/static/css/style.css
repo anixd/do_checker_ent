@@ -369,6 +369,17 @@ nav.tabs a.active {
     font-size: 14px;
     color: var(--c-text-muted);
 }
+/* Version line at the bottom of every page: reference information, not a
+   control, so it stays quiet. */
+.app-footer {
+    margin-top: 32px;
+    padding-top: 12px;
+    border-top: 1px solid var(--c-border-lighter);
+    color: var(--c-text-muted);
+    font-size: 13px;
+    text-align: right;
+}
+
 /* Configuration problems, shown on every page: a config read only in part is
    not something to leave in the log where nobody is looking. */
 .config-plaque {
