@@ -276,13 +276,13 @@ document.addEventListener("DOMContentLoaded", () => {
 
     if (clearLogsButton) {
         clearLogsButton.addEventListener("click", async () => {
-            if (!confirm("Are you sure you want to delete all log files? This cannot be undone.")) { return; }
+            if (!confirm("Delete the logs of all previous runs? This cannot be undone. The application's own logs are kept.")) { return; }
             try {
                 // используем URL из clearLogsUrl
                 const response = await fetch(clearLogsUrl, { method: "POST" });
                 if (response.ok) {
-                    alert("Logs cleared successfully.");
-                    resultsContainer.innerHTML = '<p class="muted mt-2">Logs cleared.</p>';
+                    alert("Run logs cleared. The application's own logs are kept.");
+                    resultsContainer.innerHTML = '<p class="muted mt-2">Run logs cleared.</p>';
                     clearTotals();
                 } else {
                     const errData = await response.json();

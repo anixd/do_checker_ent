@@ -593,11 +593,18 @@ take the run id from a check's log file, grep `engine.log` for it,
 and the whole sequence is there, including what the server was doing at the time.
 The same stream goes to stdout, so `docker compose logs -f` shows it too.
 
+**[TROUBLESHOOTING.md](TROUBLESHOOTING.md) is the companion to this section:**
+what each marker in the log means,
+and the recipe for every question that usually sends someone into it —
+why a run did not start, whether the proxy or the site is at fault,
+why a screenshot is missing, why a worker died.
+
 `LOG_LEVEL=DEBUG` in `.env` adds the per-request detail:
 the proxy session being built, the screenshot machinery,
 individual connections refused by the gateway during a page render.
 
-The **Clear Logs** button on the Checker page wipes `./logs/` entirely.
+The **Clear Logs** button on the Checker page removes the per-run directories.
+The application's own logs are left alone.
 There is no undo.
 
 ---
