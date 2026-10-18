@@ -513,8 +513,8 @@ Every run gets its own directory under `./logs/`:
 
 ```
 logs/2026-10-17/13-43-50_std-check_soax-http/
-    13-43-50_lyfhgqmtdz.com.md
-    13-43-50_lyfhgqmtdz.com.png
+    13-43-50_example.com.md
+    13-43-50_example.com.png
 ```
 
 The directory name carries the time,
@@ -526,7 +526,7 @@ Multi-Geo file names end with the country code.
 A check's log file looks like this:
 
 ```
-# lyfhgqmtdz.com
+# example.com
 Started: 2026-10-17T13:43:53
 Geo: AZ (requested) — exit node: AZ / Yevlax City / Yevlakh / Aztelekom LLC AS8814
 Proxy: SOAX session dc3a4a798100, ext_ip: 158.181.44.176
@@ -535,7 +535,7 @@ Transport: http
 DNS resolve: remote (on the exit node)
 Network: res_mob
 Timeout: 30s
-URL: http://lyfhgqmtdz.com
+URL: http://example.com
 ```
 
 followed by the redirect chain, the timings, the HTTP status and size,
@@ -585,7 +585,7 @@ Both directories are bind-mounted from the host, so they survive container rebui
 with the run and the URL on every line that belongs to a check:
 
 ```
-2026-10-17 13:43:50 [INFO] [pid=14] [run=3a4a7981d3db url=lyfhgqmtdz.com] engine: Task started.
+2026-10-17 13:43:50 [INFO] [pid=14] [run=3a4a7981d3db url=example.com] engine: Task started.
 ```
 
 That is what makes a report from days ago readable:
