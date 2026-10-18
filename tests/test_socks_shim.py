@@ -261,24 +261,24 @@ class TestLocalResolution(unittest.TestCase):
 
     def test_ipv4_is_preferred_over_ipv6(self):
         dual_stack = [
-            (socket.AF_INET6, socket.SOCK_STREAM, 6, "", ("2a02:b4a:1:1d::103", 443, 0, 0)),
-            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("45.80.110.27", 443)),
+            (socket.AF_INET6, socket.SOCK_STREAM, 6, "", ("2001:db8::103", 443, 0, 0)),
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("203.0.113.27", 443)),
         ]
         original = socket.getaddrinfo
         socket.getaddrinfo = lambda *a, **kw: dual_stack
         try:
-            self.assertEqual(resolve_preferring_ipv4("example.test", 443), "45.80.110.27")
+            self.assertEqual(resolve_preferring_ipv4("example.test", 443), "203.0.113.27")
         finally:
             socket.getaddrinfo = original
 
     def test_ipv6_is_used_when_there_is_nothing_else(self):
         only_v6 = [
-            (socket.AF_INET6, socket.SOCK_STREAM, 6, "", ("2a02:b4a:1:1d::103", 443, 0, 0)),
+            (socket.AF_INET6, socket.SOCK_STREAM, 6, "", ("2001:db8::103", 443, 0, 0)),
         ]
         original = socket.getaddrinfo
         socket.getaddrinfo = lambda *a, **kw: only_v6
         try:
-            self.assertEqual(resolve_preferring_ipv4("example.test", 443), "2a02:b4a:1:1d::103")
+            self.assertEqual(resolve_preferring_ipv4("example.test", 443), "2001:db8::103")
         finally:
             socket.getaddrinfo = original
 
