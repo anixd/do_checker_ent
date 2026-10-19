@@ -17,7 +17,7 @@ Anything from 1.0.0 onwards describes this repository.
 
 ---
 
-## [Unreleased]
+## [2.1.0] - 2026-10-19
 
 ### What's new
 
@@ -38,6 +38,14 @@ Anything from 1.0.0 onwards describes this repository.
 * **In ALL mode, catalog entries the ISO table does not know are skipped**
   with a line in the log naming them,
   rather than paired with every URL of the run.
+
+### Changed
+
+* **The Geo Catalog page refuses to save an empty country list.**
+  A submission that keeps none of the existing countries and adds no valid new
+  one would leave the dropdown and the ALL mode with nothing to offer;
+  the catalog is maintained by hand and has no undo,
+  so the existing list stays and the page says why.
 
 ### Upgrading
 
