@@ -36,6 +36,52 @@ class TestNames(unittest.TestCase):
     def test_name_of_an_unknown_code_is_none(self):
         self.assertIsNone(countries.name_of("zz"))
 
+    def test_apolitical_name_wins_where_the_two_differ(self):
+        # The catalog name is what the dropdown shows, so the shorter and less
+        # contested form is the useful one.
+        self.assertEqual(countries.name_of("tw"), "Taiwan")
+        self.assertEqual(countries.name_of("ps"), "Palestine")
+
+    def test_the_qualifier_behind_a_comma_is_dropped(self):
+        self.assertEqual(countries.name_of("ir"), "Iran")
+        self.assertEqual(countries.name_of("bo"), "Bolivia")
+        self.assertEqual(countries.name_of("md"), "Moldova")
+
+    def test_a_trailing_bracket_is_dropped(self):
+        self.assertEqual(countries.name_of("fk"), "Falkland Islands")
+        self.assertEqual(countries.name_of("mf"), "Saint Martin")
+
+    def test_a_bracket_in_the_middle_is_left_alone(self):
+        self.assertEqual(countries.name_of("cc"), "Cocos (Keeling) Islands")
+
+    def test_names_that_would_collide_keep_their_qualifier(self):
+        # The dropped half is exactly what tells these two apart.
+        self.assertEqual(countries.name_of("vg"), "Virgin Islands, British")
+        self.assertEqual(countries.name_of("vi"), "Virgin Islands, U.S.")
+
+    def test_the_long_famous_ones_are_named_by_hand(self):
+        # 'United Kingdom of Great Britain and Northern Ireland' has no comma
+        # for the rule to work with, and would make the dropdown wider than the
+        # page; 'Congo' and 'Korea' each name two countries.
+        self.assertEqual(countries.name_of("gb"), "United Kingdom")
+        self.assertEqual(countries.name_of("us"), "United States")
+        self.assertEqual(countries.name_of("kr"), "South Korea")
+        self.assertEqual(countries.name_of("kp"), "North Korea")
+        self.assertEqual(countries.name_of("cd"), "DR Congo")
+        self.assertEqual(countries.name_of("cg"), "Congo")
+
+    def test_every_name_is_short_enough_for_a_dropdown(self):
+        # Uninhabited territories keep their real names; everything a proxy
+        # service actually offers has to fit on a line.
+        oversized = {
+            code: name
+            for code, name in countries._DISPLAY_NAMES.items()
+            if len(name) > 24
+        }
+        self.assertEqual(
+            sorted(oversized), ["gs", "hm", "io", "pm", "tf", "um", "vc"], oversized
+        )
+
 
 class TestSuggest(unittest.TestCase):
     def test_uk_suggests_gb(self):

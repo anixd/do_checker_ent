@@ -32,6 +32,9 @@ Anything from 1.0.0 onwards describes this repository.
   `uk` → `gb`, `usa` → `us`, `germany` → `de`.
 * **A country added to the catalog is named from the same table,**
   so the dropdown reads `Ukraine` instead of the placeholder `UA`.
+  The name is the short one: `United Kingdom`, not the 52-character official
+  title, and `Taiwan` rather than the political long form.
+  Names already in the catalog are left as they are.
 * **In ALL mode, catalog entries the ISO table does not know are skipped**
   with a line in the log naming them,
   rather than paired with every URL of the run.

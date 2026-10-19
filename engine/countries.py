@@ -18,12 +18,65 @@ name is what someone types when they do not know there is a code at all.
 
 from __future__ import annotations
 
-from iso3166 import countries_by_alpha2, countries_by_alpha3, countries_by_name
+import re
+
+from iso3166 import countries, countries_by_alpha2, countries_by_alpha3, countries_by_name
 
 # Not a general misspelling table: one entry, for the one code people actually
 # type. The United Kingdom is 'gb' in ISO 3166-1; 'uk' is reserved but unused,
 # and the gateway charges for the attempt.
 _ALIASES = {"uk": "gb"}
+
+# The names below are what a reader sees in the country dropdown and in the
+# catalog, so length is a feature: 'United Kingdom of Great Britain and Northern
+# Ireland' is the correct name of 'gb' and makes the control wider than the rest
+# of the page put together.
+#
+# The ones listed have no comma or bracket for the rule below to work with, or
+# would collide with another country if it did ('Congo' and 'Korea' each name
+# two). What stays long is uninhabited or tiny - 'South Georgia and the South
+# Sandwich Islands' is nobody's exit node, and an invented abbreviation for it
+# would be worse than the real name.
+_NAME_OVERRIDES = {
+    "gb": "United Kingdom",
+    "us": "United States",
+    "kr": "South Korea",
+    "kp": "North Korea",
+    "cd": "DR Congo",
+    "la": "Laos",
+}
+
+
+def _build_display_names() -> dict[str, str]:
+    """
+    Shortens the ISO names once, at import.
+
+    ISO moves the qualifier behind a comma - 'Iran, Islamic Republic of',
+    'Bolivia, Plurinational State of' - and puts the disambiguating half in
+    brackets - 'Saint Martin (French part)'. Dropping either leaves the country
+    as everyone writes it.
+
+    Only when no other country shortens to the same thing, though: 'Virgin
+    Islands, British' and 'Virgin Islands, U.S.' keep their full names, because
+    what tells them apart is exactly the half being dropped.
+    """
+    def shorten(name: str) -> str:
+        return re.sub(r"\s*\([^)]*\)$", "", name).split(",")[0].strip()
+
+    stems: dict[str, list[str]] = {}
+    for country in countries:
+        stems.setdefault(shorten(country.apolitical_name).lower(), []).append(country.alpha2)
+
+    names: dict[str, str] = {}
+    for country in countries:
+        code = country.alpha2.lower()
+        stem = shorten(country.apolitical_name)
+        unique = len(stems[stem.lower()]) == 1
+        names[code] = _NAME_OVERRIDES.get(code) or (stem if unique else country.apolitical_name)
+    return names
+
+
+_DISPLAY_NAMES = _build_display_names()
 
 
 def normalize(raw: str | None) -> str:
@@ -37,9 +90,14 @@ def is_valid(raw: str | None) -> bool:
 
 
 def name_of(raw: str | None) -> str | None:
-    """The country's English name, or None if the code is not a real one."""
-    country = countries_by_alpha2.get(normalize(raw).upper())
-    return country.name if country else None
+    """
+    The country as it should be labelled, or None if the code is not a real one.
+
+    Short on purpose - this ends up in the dropdown and in the catalog file -
+    and apolitical where the table offers a choice: 'Taiwan', not 'Taiwan,
+    Province of China'. See _build_display_names for how the shortening works.
+    """
+    return _DISPLAY_NAMES.get(normalize(raw))
 
 
 def suggest(raw: str | None) -> str | None:
