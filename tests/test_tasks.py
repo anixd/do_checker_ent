@@ -99,12 +99,24 @@ class TestMultiGeo(unittest.TestCase):
         self.assertEqual([t.is_valid for t in tasks], [False, False])
         self.assertIn("Invalid country code", tasks[0].parsing_error)
 
-    def test_two_letter_code_is_left_to_the_gateway(self):
-        # 'zz' is shape-valid; the gateway answers ERR_INVALID_VALUE for it.
-        # Rejecting it here would also reject countries missing from the catalog.
+    def test_code_the_iso_table_does_not_know_is_a_row_error(self):
+        # Shape-valid but not a country: sending it to the gateway spends a
+        # request only to be told so, once per row of the run.
         tasks = build_multi_geo_tasks("a.com zz")
+        self.assertFalse(tasks[0].is_valid)
+        self.assertIn("Unknown country code", tasks[0].parsing_error)
+
+    def test_valid_code_outside_the_catalog_is_still_accepted(self):
+        # The catalog drives the dropdown and the ALL mode, not what may be
+        # checked: Multi-Geo takes any real alpha-2 code.
+        tasks = build_multi_geo_tasks("a.com vu")
         self.assertTrue(tasks[0].is_valid)
-        self.assertEqual(tasks[0].country, "zz")
+        self.assertEqual(tasks[0].country, "vu")
+
+    def test_row_error_carries_the_correction(self):
+        tasks = build_multi_geo_tasks("a.com uk")
+        self.assertFalse(tasks[0].is_valid)
+        self.assertIn("'gb'", tasks[0].parsing_error)
 
     def test_dedups_pairs_but_keeps_distinct_geos(self):
         tasks = build_multi_geo_tasks("a.com az\na.com az\na.com tr")

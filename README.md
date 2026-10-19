@@ -180,7 +180,10 @@ The list of countries offered in the **Country** dropdown lives in
 `data/catalog/soax_geo.json` and ships with a default list.
 Edit it on the **Geo Catalog** page: add ISO 3166-1 alpha-2 codes,
 remove the ones you do not need, save.
-A new country gets a placeholder name, which you can correct in the JSON itself.
+A code the ISO 3166-1 table does not know is refused with a note saying so,
+and a near miss is corrected in it (`uk` → `gb`, `usa` → `us`, `germany` → `de`);
+an accepted one is named from the same table,
+so the dropdown reads `Ukraine` rather than `UA`.
 
 **The list is maintained by hand.** The "Refresh from SOAX" button needs a
 catalog API that the enterprise plan does not expose, and it will not bring anything back.
@@ -190,7 +193,10 @@ copy `soax_geo.json` across rather than retyping the list.
 The catalog does not limit what you can check:
 the **Multi-Geo** page accepts any valid two-letter country code,
 whether or not it is in the catalog.
-The catalog drives the dropdown and the **ALL** option.
+The catalog drives the dropdown and the **ALL** option —
+and in **ALL** an entry the ISO table does not know is skipped,
+with a line in the log naming it,
+rather than paired with every URL of the run.
 
 ---
 
@@ -222,8 +228,11 @@ site1.org az
 site2.org tr
 ```
 
-Rows with a bad format or a malformed country code are reported individually
-rather than failing the whole run.
+Rows with a bad format or a country code that is not in ISO 3166-1 are reported
+individually rather than failing the whole run,
+and the note on the row carries the correction when there is an obvious one.
+A code is checked before the run starts,
+so a typo costs a row in the report instead of a request through the proxy.
 
 Selecting **ALL** in the Checker's country dropdown expands into the same
 mechanism: every URL is paired with every country in the catalog.

@@ -18,6 +18,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Iterable
 
+from engine.countries import error_for as country_error
+
 # Kept here rather than imported from providers.soax_session so that this module
 # stays dependency-free; the session-id format is asserted in tests.
 from providers.soax_session import make_session_id
@@ -251,8 +253,8 @@ def build_multi_geo_tasks(urls_raw: str) -> list[CheckTask]:
 
     A bad line becomes a task carrying parsing_error instead of failing the whole
     submission: the point of a mirror report is the rows that did work. The
-    country code is only checked for shape here - whether 'zz' exists is the
-    gateway's business, and it answers ERR_INVALID_VALUE.
+    country code is checked against the ISO 3166-1 table, so a code that does
+    not exist costs a row in the report rather than a request to the gateway.
     """
     tasks: list[CheckTask] = []
     seen_tasks: set[tuple[str, str]] = set()
@@ -278,8 +280,9 @@ def build_multi_geo_tasks(urls_raw: str) -> list[CheckTask]:
         url = normalize_url(parts[0])
         country = parts[1].lower()
 
-        if len(country) != 2 or not country.isalpha():
-            add_error(url, f"Invalid country code: {parts[1]!r} (expected 2 letters)")
+        country_problem = country_error(parts[1])
+        if country_problem:
+            add_error(url, country_problem)
             continue
 
         key = (url, country)
