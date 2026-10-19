@@ -17,7 +17,7 @@ Anything from 1.0.0 onwards describes this repository.
 
 ---
 
-## [Unreleased]
+## [2.0.2] - 2026-10-19
 
 ### What's new
 
