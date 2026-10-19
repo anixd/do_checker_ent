@@ -3,6 +3,7 @@ import os, json, time
 from typing import Dict, List
 from datetime import datetime
 from config.loader import ConfigStore
+from engine.countries import name_of
 from logging_.engine_logger import get_engine_logger
 from .soax_api import SoaxApiClient
 
@@ -145,11 +146,13 @@ class CatalogStore:
                     # Keep existing entry
                     new_countries_list.append(old_countries_map[code])
                 else:
-                    # Add new geo entry (using code.upper() as name)
+                    # The name comes from the ISO 3166-1 table, so the dropdown
+                    # reads 'Ukraine' rather than 'UA'; an unknown code keeps
+                    # the code as its own label instead of showing nothing.
                     log.info(f"Adding new geo for country code: {code}")
                     new_geo = {
                         "code": code,
-                        "name": code.upper(),
+                        "name": name_of(code) or code.upper(),
                         "regions": [],
                         "cities": [],
                         "isps": []

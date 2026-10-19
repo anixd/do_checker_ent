@@ -17,6 +17,44 @@ Anything from 1.0.0 onwards describes this repository.
 
 ---
 
+## [2.1.0] - 2026-10-19
+
+### What's new
+
+* **Country codes are checked against ISO 3166-1 alpha-2 before a run starts.**
+  A code the table does not know is refused on the Checker page,
+  reported per row on the Multi-Geo page,
+  and rejected when added on the Geo Catalog page.
+  Until now only the shape was checked,
+  so `zz` reached the gateway and spent a request per mirror to be told it is
+  not a country.
+  The message carries the correction when there is an obvious one:
+  `uk` → `gb`, `usa` → `us`, `germany` → `de`.
+* **A country added to the catalog is named from the same table,**
+  so the dropdown reads `Ukraine` instead of the placeholder `UA`.
+  The name is the short one: `United Kingdom`, not the 52-character official
+  title, and `Taiwan` rather than the political long form.
+  Names already in the catalog are left as they are.
+* **In ALL mode, catalog entries the ISO table does not know are skipped**
+  with a line in the log naming them,
+  rather than paired with every URL of the run.
+
+### Changed
+
+* **The Geo Catalog page refuses to save an empty country list.**
+  A submission that keeps none of the existing countries and adds no valid new
+  one would leave the dropdown and the ALL mode with nothing to offer;
+  the catalog is maintained by hand and has no undo,
+  so the existing list stays and the page says why.
+
+### Upgrading
+
+* This release adds the first external dependency, `iso3166`
+  (9 KB, no dependencies of its own),
+  so update with `docker compose up -d --build` rather than a restart.
+
+---
+
 ## [2.0.2] - 2026-10-19
 
 ### What's new

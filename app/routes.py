@@ -7,6 +7,7 @@ import threading
 import shutil
 import os
 from engine.alive import ensure_proxy_alive
+from engine.countries import error_for as country_error, name_of, split_valid
 from engine.orchestrator import start_run, get_run_state
 from engine.tasks import (
     ALLOWED_RESOLVE,
@@ -86,6 +87,15 @@ def launch_run():
         log.warning("Run rejected: Country is required.")
         return Response("Country is required", status=400)
 
+    # Before anything reaches the provider: the gateway refuses a code it does
+    # not know, and that refusal is a spent request. On a list of forty mirrors
+    # it is forty of them, for a typo this check can name.
+    if country_code != "all":
+        country_problem = country_error(country_code)
+        if country_problem:
+            log.warning("Run rejected: %s", country_problem)
+            return Response(country_problem, status=400)
+
     # Validated here rather than deeper down: the gateway answers 200 to a
     # request carrying no targeting rules and routes it through an arbitrary
     # country, which would yield a plausible but meaningless result.
@@ -105,7 +115,22 @@ def launch_run():
     if country_code == "all":
         # ALL is the Multi-Geo mechanism with the catalog as the country list,
         # so it gets the same label and the same log layout.
-        countries = [c["code"] for c in CatalogStore.get_countries()]
+        # The catalog is a hand-maintained file and may predate this check, so
+        # its codes are filtered rather than trusted: in ALL mode a single bad
+        # entry is paired with every URL of the run.
+        countries, unusable = split_valid([c["code"] for c in CatalogStore.get_countries()])
+        if unusable:
+            log.warning(
+                "ALL run: skipping %s catalog %s the ISO 3166-1 table does not know: %s",
+                len(unusable), "entry" if len(unusable) == 1 else "entries",
+                ", ".join(repr(code) for code in unusable),
+            )
+        if not countries:
+            log.warning("Run rejected: the catalog has no usable country codes.")
+            return Response(
+                "The country catalog has no valid ISO 3166-1 codes; fix it on the "
+                "Geo Catalog page", status=400,
+            )
         tasks = build_all_country_tasks(urls_raw, countries)
         label = "multi-geo"
     else:
@@ -182,11 +207,14 @@ def catalog_update_list():
         new_countries_str = request.form.get("new_countries", "")
         existing_countries_keep = request.form.getlist("countries_to_keep")
 
-        new_countries_list = [
-            code.strip().lower()
-            for code in new_countries_str.split()
-            if code.strip()
-        ]
+        submitted = [code for code in new_countries_str.split() if code.strip()]
+        new_countries_list, rejected = split_valid(submitted)
+
+        # Said here rather than silently dropped: the catalog feeds the dropdown
+        # and the ALL mode, so an entry that is not a real country code would
+        # turn into spent requests later, far from the page that accepted it.
+        for code in rejected:
+            flash(f"Skipped: {country_error(code)}", "catalog")
 
         final_codes_list = []
         seen_codes = set()
@@ -201,9 +229,31 @@ def catalog_update_list():
                 final_codes_list.append(code)
                 seen_codes.add(code)
 
+        # An empty result means every country was removed and nothing valid was
+        # added - which leaves the dropdown and the ALL mode with nothing to
+        # offer. Far more often it is a submission that lost its checkboxes
+        # than a deliberate wipe, and the catalog is hand-maintained data with
+        # no undo, so the existing list stays.
+        if not final_codes_list:
+            log.warning("Catalog update refused: the resulting country list would be empty.")
+            flash(
+                "Nothing saved: that would leave the catalog empty. "
+                "Add at least one valid country code, or keep one of the existing ones.",
+                "catalog",
+            )
+            return redirect(url_for("routes.catalog"))
+
         CatalogStore.update_country_list(final_codes_list)
 
-        flash("Catalog country list updated successfully.", "catalog")
+        added = [code for code in new_countries_list if code not in existing_countries_keep]
+        if added:
+            flash(
+                "Catalog country list updated. Added: "
+                + ", ".join(f"{code} ({name_of(code)})" for code in added),
+                "catalog",
+            )
+        else:
+            flash("Catalog country list updated successfully.", "catalog")
 
     except Exception as e:
         log.error(f"Failed to update catalog list: {e}", exc_info=True)
